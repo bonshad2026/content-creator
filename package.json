@@ -1,0 +1,17 @@
+{
+  "name": "content-creator",
+  "private": true,
+  "workspaces": ["packages/*", "apps/*"],
+  "scripts": {
+    "dev": "concurrently -n web,worker -c blue,magenta \"npm run dev -w @cc/web\" \"npm run dev -w @cc/worker\"",
+    "build": "npm run build -w @cc/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm test -w @cc/core"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.6",
+    "typescript": "~5.9.3",
+    "@types/node": "^24.19.2"
+  },
+  "engines": { "node": ">=22" }
+}
