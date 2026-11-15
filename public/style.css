@@ -17,8 +17,8 @@ p { margin: 0 0 12px; } .muted { color: var(--muted); font-size: .9rem; }
 .spacer { flex: 1; }
 
 /* inputs & buttons */
-input, textarea { width: 100%; font: inherit; font-size: 16px; color: var(--text); background: var(--card); border: 1.5px solid var(--line); border-radius: 14px; padding: 12px 14px; outline: none; }
-input:focus, textarea:focus { border-color: var(--accent); }
+input, textarea, select { width: 100%; font: inherit; font-size: 16px; color: var(--text); background: var(--card); border: 1.5px solid var(--line); border-radius: 14px; padding: 12px 14px; outline: none; }
+input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 .ltr { direction: ltr; text-align: center; letter-spacing: 2px; font-size: 1.3rem; }
 .btn { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; font: inherit; font-weight: 700; font-size: 1rem; border: 0; border-radius: 14px; padding: 14px; cursor: pointer; background: var(--accent); color: #fff; min-height: 52px; }
 .btn.ghost { background: transparent; color: var(--accent); border: 1.5px solid var(--line); font-weight: 500; }
@@ -131,3 +131,8 @@ label.row input[type="checkbox"] { width: 22px; height: 22px; flex: none; paddin
 /* feedback + revise */
 .fb { display: flex; gap: 8px; margin-bottom: 10px; }
 #fbk textarea { margin-bottom: 8px; resize: vertical; }
+/* plan notice + admin */
+.notice { background: #fff7e0; border: 1px solid #f3d27a; color: #6b4e00; margin-bottom: 12px; }
+.admin-user .row, .admin-plan .row { gap: 10px; }
+.admin-user select, .admin-user input, .admin-plan input { max-width: 58%; }
+#aq { margin-bottom: 10px; }

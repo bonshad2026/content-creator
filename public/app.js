@@ -8,13 +8,15 @@ const $app = document.getElementById("app");
 const esc = (s = "") => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const fa = (n) => String(n).replace(/\d/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[d]);
 const go = (h) => (location.hash = h);
+// every URL is relative to the page, so the app works under any BASE_URL ("/api/x" → "api/x", "/uploads/y" → "uploads/y")
+const rel = (u) => (typeof u === "string" && u.startsWith("/") ? u.slice(1) : u);
 const ago = (t) => {
   const m = Math.round((Date.now() - t) / 60000);
   return m < 1 ? "همین الان" : m < 60 ? `${fa(m)} دقیقه پیش` : m < 1440 ? `${fa(Math.round(m / 60))} ساعت پیش` : new Date(t).toLocaleDateString("fa-IR");
 };
 
 async function api(path, { method = "GET", body } = {}) {
-  const res = await fetch(path, {
+  const res = await fetch(rel(path), {
     method,
     headers: { "Content-Type": "application/json", ...(S.token ? { Authorization: "Bearer " + S.token } : {}) },
     body: body && JSON.stringify(body),
@@ -195,16 +197,21 @@ views.home = () => {
   const recent = S.jobs.filter((j) => j.status === "done" || j.status === "error").slice(0, 3);
   $app.innerHTML = `
     <div class="hello"><h1>سلام ${esc(S.me.name)} 👋</h1><p class="muted">${S.me.style ? "عکس یا ویدیو بده، بقیه‌ش با من." : "اول چندتا سؤال کوتاه می‌پرسم تا سبکت رو بشناسم."}</p></div>
+    ${planBlocked() ? `<div class="card notice">حسابت هنوز فعال نشده. وقتی مدیر برات پلن فعال کنه، می‌تونی محتوا بسازی.</div>` : ""}
     <div class="big-wrap"><button class="big" id="go"><span>✦</span>تولید محتوا</button></div>
     ${running.length ? `<div class="section-title">در حال تولید <span class="spinner dark"></span></div>${running.map(jobRow).join("")}` : ""}
     ${recent.length ? `<div class="section-title">آخرین‌ها <a class="link" href="#/history">همه</a></div>${recent.map(jobRow).join("")}` : ""}`;
   document.getElementById("go").onclick = () => go(S.me.style ? "#/create" : "#/wizard");
 };
 
+const planBlocked = () => !S.me.admin && S.me.plan && S.me.plan.reelsPerDay === 0 && S.me.plan.postsPerDay === 0;
+const limitText = (used, max) => (max == null ? `${fa(used)} (نامحدود)` : `${fa(used)} از ${fa(max)}`);
+const faDate = (t) => new Date(t).toLocaleDateString("fa-IR");
+
 const KIND = { video: "ویدیو", carousel: "پست اسلایدی", image: "عکس", reel: "ریل ویدیویی" };
 const STAGE = { analyzing: "بررسی ویدیو…", writing: "نوشتن و برنامه‌ی ادیت…", rendering: "ساخت ویدیو…" };
 const statusLabel = (j) => j.status === "running" && STAGE[j.stage] ? STAGE[j.stage] : { uploading: "در حال آپلود", queued: "در صف", running: "در حال تولید…", done: "آماده", error: "خطا" }[j.status];
-const thumbOf = (j) => j.coverImg || j.thumb || j.frames?.[0] || VIDEO_THUMB;
+const thumbOf = (j) => rel(j.coverImg || j.thumb || j.frames?.[0]) || VIDEO_THUMB;
 
 function jobRow(j) {
   const label = statusLabel(j);
@@ -296,7 +303,7 @@ views.wizard = (params) => {
 };
 
 const sampleTiles = () =>
-  S.me.samples.map((s) => `<div class="tile"><img src="${s.frames[0]}"><button class="x" data-del="${s.id}">✕</button>${s.kind === "video" ? '<span class="k">ویدیو</span>' : ""}</div>`).join("");
+  S.me.samples.map((s) => `<div class="tile"><img src="${rel(s.frames[0])}"><button class="x" data-del="${s.id}">✕</button>${s.kind === "video" ? '<span class="k">ویدیو</span>' : ""}</div>`).join("");
 function bindSampleDelete(after) {
   document.querySelectorAll("[data-del]").forEach((b) => (b.onclick = async () => {
     S.me = await api("/api/samples/" + b.dataset.del, { method: "DELETE" });
@@ -315,7 +322,7 @@ function uploadOnce(url, blob, onProgress) {
     const x = new XMLHttpRequest();
     let watchdog;
     const arm = () => { clearTimeout(watchdog); watchdog = setTimeout(() => { x.abort(); bad(Object.assign(new Error("stalled"), { retry: true })); }, STALL_MS); };
-    x.open("PUT", url);
+    x.open("PUT", rel(url));
     x.setRequestHeader("Authorization", "Bearer " + S.token);
     x.setRequestHeader("Content-Type", "application/octet-stream");
     x.upload.onprogress = (e) => { arm(); e.lengthComputable && onProgress(e.loaded); };
@@ -448,10 +455,10 @@ views.job = (id) => {
   if (!j) return go("#/history");
   const o = j.output;
   const top = `<div class="topbar"><button class="back" id="bk">→</button><div class="title">${KIND[j.kind]}</div><span class="status ${j.status}">${statusLabel(j)}</span></div>
-    ${j.kind === "reel" ? (j.video && j.status === "done" ? `<video class="reel" src="${j.video}" poster="${j.coverImg}" controls playsinline preload="metadata"></video>
-      <div class="dl"><a class="btn" href="${j.video}" download="reel-${j.id}.mp4">⬇ دانلود ویدیو</a><a class="btn ghost" href="${j.coverImg}" download="cover-${j.id}.jpg">⬇ کاور</a></div>
+    ${j.kind === "reel" ? (j.video && j.status === "done" ? `<video class="reel" src="${rel(j.video)}" poster="${rel(j.coverImg)}" controls playsinline preload="metadata"></video>
+      <div class="dl"><a class="btn" href="${rel(j.video)}" download="reel-${j.id}.mp4">⬇ دانلود ویدیو</a><a class="btn ghost" href="${rel(j.coverImg)}" download="cover-${j.id}.jpg">⬇ کاور</a></div>
       <div class="muted center" style="font-size:.8rem">${RECIPE_FA[j.output?.recipe] ? `قالب ${RECIPE_FA[j.output.recipe]} · ` : ""}${fa(j.output?.duration || 0)} ثانیه${j.output?.subtitles ? " · زیرنویس کلمه‌به‌کلمه" : ""}${j.output?.jumpCuts ? ` · ${fa(j.output.jumpCuts)} جامپ‌کات` : ""}${j.output?.music ? ` · موزیک ${esc(j.output.music.mood)}` : ""}${j.output?.look && j.output.look !== "natural" ? ` · رنگ ${esc(j.output.look)}` : ""}${j.output?.transitions?.length ? ` · ${fa(j.output.transitions.length)} ترنزیشن` : ""}${j.output?.smartCrop ? " · کراپ هوشمند" : ""}${j.output?.colorFixed ? " · اصلاح رنگ" : ""}</div>`: `<div class="strip"><img src="${thumbOf(j)}"></div>`)
-      : `<div class="strip">${j.frames.map((f) => `<img src="${f}">`).join("")}</div>`}`;
+      : `<div class="strip">${j.frames.map((f) => `<img src="${rel(f)}">`).join("")}</div>`}`;
   let body;
   if (j.status === "done") {
     const full = `${o.caption}\n\n${(o.hashtags || []).join(" ")}`.trim();
@@ -532,7 +539,8 @@ function toPng(file, max = 512) {
 const RECIPE_FA = { cinematic: "سینمایی", quiz: "کوییز", list: "لیستی", "before-after": "قبل و بعد", tutorial: "آموزشی", story: "داستانی", hook: "مشکل و راه‌حل", promo: "معرفی", talk: "صحبت" };
 const BRAND_COLORS = ["#FFD400", "#FF3B6B", "#00D1FF", "#7CFF4F", "#B266FF", "#FF8A00", "#FFFFFF"];
 
-views.settings = () => {
+views.settings = (fresh) => {
+  if (fresh !== true) api("/api/me").then((me) => { S.me = me; if (location.hash.startsWith("#/settings")) views.settings(true); }).catch(() => {});
   const st = S.me.style;
   const u = S.me.usage || { tokens: 0 };
   $app.innerHTML = `
@@ -550,14 +558,20 @@ views.settings = () => {
     <div class="card" id="brand">
       <div class="row"><span>رنگ اصلی</span><div class="swatches">${BRAND_COLORS.map((c) => `<button class="sw ${(S.me.brand?.color || "#FFD400").toUpperCase() === c ? "on" : ""}" data-c="${c}" style="background:${c}" aria-label="${c}"></button>`).join("")}</div></div>
       <div class="row"><span>آیدی پیج</span><button class="link" id="hd">${S.me.brand?.handle ? `<bdi dir="ltr">${esc(S.me.brand.handle)}</bdi>` : "تنظیم نشده"} ✎</button></div>
-      <div class="row"><span>لوگو</span><span class="logo-row">${S.me.brand?.logo ? `<img src="${S.me.brand.logo}" class="logo" alt="">` : ""}<button class="link" id="lg">${S.me.brand?.logo ? "عوض کن" : "آپلود"}</button></span></div>
+      <div class="row"><span>لوگو</span><span class="logo-row">${S.me.brand?.logo ? `<img src="${rel(S.me.brand.logo)}" class="logo" alt="">` : ""}<button class="link" id="lg">${S.me.brand?.logo ? "عوض کن" : "آپلود"}</button></span></div>
       <label class="row"><span>کارت پایانی (لوگو، آیدی، دعوت به فالو)</span><input type="checkbox" id="ou" ${S.me.brand?.outro ? "checked" : ""}></label>
       <label class="row"><span>لوگوی کوچیک گوشه‌ی ویدیو</span><input type="checkbox" id="wm" ${S.me.brand?.watermark ? "checked" : ""}></label>
     </div>
     <div class="section-title">نمونه‌کارها <button class="btn small" id="addS">افزودن</button></div>
     <div class="grid" id="sg">${sampleTiles() || '<p class="muted">نمونه‌کاری نیست.</p>'}</div>
-    <div class="section-title">مصرف</div>
-    <div class="card"><div class="row"><span>کل توکن مصرف‌شده</span><span class="v">${fa((u.tokens || 0).toLocaleString())}</span></div></div>
+    <div class="section-title">پلن و مصرف</div>
+    <div class="card">${S.me.admin ? '<div class="row"><span>پلن</span><span class="v">مدیر (بدون محدودیت)</span></div>' : S.me.plan ? `
+      <div class="row"><span>پلن</span><span class="v">${esc(S.me.plan.name)}${S.me.plan.until ? ` · تا ${faDate(S.me.plan.until)}` : ""}</span></div>
+      <div class="row"><span>ریل امروز</span><span class="v">${limitText(S.me.plan.used.reelsToday, S.me.plan.reelsPerDay)}</span></div>
+      <div class="row"><span>ریل ۳۰ روز اخیر</span><span class="v">${limitText(S.me.plan.used.reelsMonth, S.me.plan.reelsPerMonth)}</span></div>
+      <div class="row"><span>پست امروز</span><span class="v">${limitText(S.me.plan.used.postsToday, S.me.plan.postsPerDay)}</span></div>` : ""}
+      <div class="row"><span>کل توکن مصرف‌شده</span><span class="v">${fa((u.tokens || 0).toLocaleString())}</span></div></div>
+    ${S.me.admin ? '<a class="btn" href="#/admin" style="margin-top:16px">پنل مدیریت</a>' : ""}
     <button class="btn ghost" id="out" style="margin-top:20px">خروج از حساب</button>`;
   document.getElementById("edit").onclick = () => { S.draft = null; go("#/wizard/edit"); };
   document.getElementById("nm").onclick = async () => {
@@ -591,6 +605,74 @@ views.settings = () => {
     catch (err) { toast(err.message, { type: "err" }); }
   };
   document.getElementById("out").onclick = async () => { await api("/api/auth/logout", { method: "POST" }).catch(() => {}); setToken(null); S.me = null; S.jobs = []; go("#/login"); };
+};
+
+// ---------------- admin: users ↔ plans, the plans themselves (only for ADMIN_PHONE) ----------------
+const LIMIT_FA = { reelsPerDay: "ریل در روز", reelsPerMonth: "ریل در ۳۰ روز", postsPerDay: "پست در روز" };
+views.admin = async () => {
+  if (!S.me.admin) return go("#/settings");
+  $app.innerHTML = '<div class="topbar"><button class="back" id="bk">→</button><div class="title">پنل مدیریت</div></div><div id="adm" class="center"><span class="spinner dark"></span></div>';
+  document.getElementById("bk").onclick = () => go("#/settings");
+  let A;
+  try { A = await api("/api/admin"); } catch (err) { return toast(err.message, { type: "err" }); }
+  if (!location.hash.startsWith("#/admin")) return;
+  const q = (S.adminQ || "").trim();
+  const qd = q.replace(/[۰-۹]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".indexOf(d));
+  const planName = (id) => A.plans.find((p) => p.id === id)?.name || id;
+  const users = A.users.filter((u) => !q || u.phone.includes(qd) || (u.name || "").includes(q));
+  const opts = (sel) => `<option value="" ${sel ? "" : "selected"}>پیش‌فرض (${esc(planName(A.defaultPlan))})</option>` +
+    A.plans.map((p) => `<option value="${p.id}" ${p.id === sel ? "selected" : ""}>${esc(p.name)}</option>`).join("");
+  const day = (t) => (t ? new Date(t).toISOString().slice(0, 10) : "");
+  const el = document.getElementById("adm");
+  el.className = "";
+  el.innerHTML = `
+    <div class="section-title">کاربران (${fa(A.users.length)})</div>
+    <input id="aq" placeholder="جستجو: شماره یا اسم" value="${esc(q)}">
+    ${users.map((u) => `<div class="card admin-user" data-u="${u.id}">
+      <div class="row"><span><b>${esc(u.name || "بی‌نام")}</b> <bdi dir="ltr" class="muted">${esc(u.phone)}</bdi>${u.admin ? " · مدیر" : ""}</span><span class="muted">${u.lastAt ? ago(u.lastAt) : "بدون فعالیت"}</span></div>
+      ${u.admin ? '<div class="row muted"><span>پلن</span><span>مدیر (بدون محدودیت)</span></div>' : `
+      <div class="row"><span>پلن</span><select data-k="plan">${opts(u.plan)}</select></div>
+      <div class="row"><span>تا تاریخ (خالی = همیشه)</span><input type="date" data-k="until" value="${day(u.planUntil)}" dir="ltr"></div>
+      <div class="row muted"><span>پلن الان</span><span>${esc(planName(u.effective))}</span></div>`}
+      <div class="row"><span>یادداشت</span><input data-k="note" value="${esc(u.note)}" placeholder="—"></div>
+      <div class="row muted"><span>امروز</span><span>${fa(u.used.reelsToday)} ریل، ${fa(u.used.postsToday)} پست</span></div>
+      <div class="row muted"><span>۳۰ روز اخیر</span><span>${fa(u.used.reelsMonth)} ریل</span></div>
+      <div class="row muted"><span>${fa(u.jobs)} کار${u.failed ? ` (${fa(u.failed)} خطا)` : ""}</span><span>${fa(u.tokens.toLocaleString())} توکن</span></div>
+    </div>`).join("") || '<div class="empty">کاربری پیدا نشد.</div>'}
+    <div class="section-title">پلن‌ها</div>
+    <div class="card"><div class="row"><span>پلن کاربرهای جدید</span><select id="dp">${A.plans.map((p) => `<option value="${p.id}" ${p.id === A.defaultPlan ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></div></div>
+    <p class="muted" style="font-size:.8rem">عدد خالی = نامحدود، ۰ = اجازه نیست.</p>
+    ${[...A.plans, { id: "", name: "", reelsPerDay: 2, reelsPerMonth: 20, postsPerDay: 5, isNew: true }].map((p) => `<div class="card admin-plan" data-p="${p.id}">
+      ${p.isNew ? '<div class="row"><b>پلن جدید</b></div><div class="row"><span>شناسه (انگلیسی)</span><input data-k="id" dir="ltr" placeholder="vip"></div>'
+        : `<div class="row"><b>${esc(p.name)}</b><bdi dir="ltr" class="muted">${p.id}</bdi></div>`}
+      <div class="row"><span>اسم</span><input data-k="name" value="${esc(p.name)}"></div>
+      ${Object.entries(LIMIT_FA).map(([k, label]) => `<div class="row"><span>${label}</span><input data-k="${k}" type="number" min="0" inputmode="numeric" dir="ltr" placeholder="نامحدود" value="${p[k] ?? ""}"></div>`).join("")}
+      <div class="row"><button class="btn small" data-save>${p.isNew ? "افزودن" : "ذخیره"}</button>${p.isNew || p.id === "none" ? "" : '<button class="link" data-del>حذف</button>'}</div>
+    </div>`).join("")}`;
+  const aq = document.getElementById("aq");
+  aq.oninput = () => {
+    S.adminQ = aq.value;
+    clearTimeout(views.admin.t);
+    views.admin.t = setTimeout(() => views.admin().then(() => { const i = document.getElementById("aq"); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }), 400);
+  };
+  const run = async (fn) => {
+    try { await fn(); toast("ذخیره شد", { type: "ok", ms: 1500 }); views.admin(); }
+    catch (err) { toast(err.message, { type: "err" }); }
+  };
+  document.querySelectorAll(".admin-user [data-k]").forEach((inp) => (inp.onchange = () =>
+    run(() => api("/api/admin/users/" + inp.closest("[data-u]").dataset.u, { method: "PUT", body: { [inp.dataset.k]: inp.value || null } }))));
+  document.getElementById("dp").onchange = (e) => run(() => api("/api/admin/settings", { method: "PUT", body: { defaultPlan: e.target.value } }));
+  document.querySelectorAll(".admin-plan").forEach((card) => {
+    const val = (k) => card.querySelector(`[data-k="${k}"]`)?.value;
+    card.querySelector("[data-save]").onclick = () => {
+      const id = card.dataset.p || (val("id") || "").trim().toLowerCase();
+      const body = { name: val("name"), ...Object.fromEntries(Object.keys(LIMIT_FA).map((k) => [k, val(k) === "" ? null : Number(val(k))])) };
+      run(() => api("/api/admin/plans/" + encodeURIComponent(id || "-"), { method: "PUT", body }));
+    };
+    const del = card.querySelector("[data-del]");
+    if (del) del.onclick = () => confirm("این پلن حذف بشه؟ کاربرهایش به پلن پیش‌فرض برمی‌گردند.") &&
+      run(() => api("/api/admin/plans/" + card.dataset.p, { method: "DELETE" }));
+  });
 };
 
 // ---------------- background job polling → toasts ----------------

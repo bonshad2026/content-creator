@@ -7,9 +7,21 @@ import { getDb, save, newId, saveFrames, deleteFrames, uploadDir } from "./src/s
 import { sendCode, verifyCode, requireUser, logout, smsEnabled } from "./src/auth.js";
 import { demoMode, MODEL } from "./src/ai.js";
 import { enqueue } from "./src/jobs.js";
+import { ensurePlans, isAdmin, planView, quotaError, cleanPlan, usageOf, planOf } from "./src/plans.js";
+
+// BASE_URL: the path the app is served under, e.g. "/creator" (or a full URL "https://x.com/creator": only its path
+// is used), so it can sit next to other apps behind one reverse proxy. Empty = the root. The page uses relative
+// URLs only, so it also works when a proxy strips the prefix.
+const BASE = (() => {
+  let b = String(process.env.BASE_URL || "").trim();
+  try { b = new URL(b).pathname; } catch {}
+  b = b.replace(/\/+$/, "");
+  return b && !b.startsWith("/") ? "/" + b : b;
+})();
 
 const db = getDb();
-const app = express();
+ensurePlans(db);
+const app = express.Router();
 app.use(express.json({ limit: "20mb" })); // only small JPEG frames arrive; videos never leave the phone
 app.use(express.static("public"));
 app.use("/uploads", express.static(uploadDir, { maxAge: "7d" }));
@@ -26,7 +38,12 @@ const wrap = (fn) => async (req, res) => {
   }
 };
 const MAX_FRAMES = 6;
-const publicUser = (u) => ({ name: u.name, phone: u.phone, style: u.style, samples: u.samples, usage: u.usage, brand: u.brand || null });
+const publicUser = (u) => ({ name: u.name, phone: u.phone, style: u.style, samples: u.samples, usage: u.usage, brand: u.brand || null, plan: planView(db, u), admin: isAdmin(u) || undefined });
+// plan limits: checked before any job that spends AI tokens is created (reel, revise, post) or retried
+const quota = (user, kind) => {
+  const msg = quotaError(db, user, kind);
+  if (msg) throw Object.assign(new Error(msg), { status: 403 });
+};
 // brand kit as the renderer needs it (absolute logo path); copied onto each job so later edits look the same
 const brandSnapshot = (u) => {
   const b = u.brand;
@@ -130,7 +147,8 @@ app.post("/api/jobs/:id/feedback", requireUser, (req, res) => {
   save();
   res.json(jobView(job));
 });
-app.post("/api/jobs/:id/revise", requireUser, (req, res) => {
+app.post("/api/jobs/:id/revise", requireUser, wrap(async (req, res) => {
+  quota(req.user, "reel");
   const parent = db.jobs.find((j) => j.id === req.params.id && j.userId === req.user.id);
   const note = String(req.body.note || "").trim().slice(0, 300);
   if (!parent || parent.kind !== "reel" || parent.status !== "done") return res.status(400).json({ error: "این ریل قابل ویرایش نیست." });
@@ -156,10 +174,11 @@ app.post("/api/jobs/:id/revise", requireUser, (req, res) => {
   save();
   enqueue(job);
   res.json(jobView(job));
-});
+}));
 
 // ---------- generation jobs ----------
-app.post("/api/jobs", requireUser, (req, res) => {
+app.post("/api/jobs", requireUser, wrap(async (req, res) => {
+  quota(req.user, "post");
   if (!req.user.style) return res.status(400).json({ error: "اول سبکت را مشخص کن." });
   const { kind = "image", frames = [], brief = "" } = req.body;
   if (!frames.length) return res.status(400).json({ error: "عکس یا ویدیو انتخاب کن." });
@@ -173,11 +192,12 @@ app.post("/api/jobs", requireUser, (req, res) => {
   save();
   enqueue(job);
   res.json(jobView(job));
-});
+}));
 
 // ---------- video reels: create → upload each file (raw stream) → start ----------
 const MAX_UPLOAD = 400 * 1024 * 1024; // per file
-app.post("/api/reels", requireUser, (req, res) => {
+app.post("/api/reels", requireUser, wrap(async (req, res) => {
+  quota(req.user, "reel");
   if (!req.user.style) return res.status(400).json({ error: "اول سبکت را مشخص کن." });
   const files = (req.body.files || []).slice(0, 10);
   if (!files.length) return res.status(400).json({ error: "فایلی انتخاب نشده." });
@@ -193,7 +213,7 @@ app.post("/api/reels", requireUser, (req, res) => {
   db.jobs.push(job);
   save();
   res.json(jobView(job));
-});
+}));
 
 app.put("/api/reels/:id/files/:n", requireUser, (req, res) => {
   const job = db.jobs.find((j) => j.id === req.params.id && j.userId === req.user.id && j.status === "uploading");
@@ -243,15 +263,69 @@ app.delete("/api/jobs/:id", requireUser, (req, res) => {
   res.json({ ok: true });
 });
 
-app.post("/api/jobs/:id/retry", requireUser, (req, res) => {
+app.post("/api/jobs/:id/retry", requireUser, wrap(async (req, res) => {
   const job = db.jobs.find((j) => j.id === req.params.id && j.userId === req.user.id);
   if (!job || job.status !== "error") return res.status(400).json({ error: "قابل تکرار نیست." });
+  quota(req.user, job.kind === "reel" ? "reel" : "post");
   if (job.kind === "reel" && !job.inputs.every((i) => fs.existsSync(path.join(jobDir(job.id), i.file))))
     return res.status(400).json({ error: "فایل‌های این ریل دیگه نیست. دوباره بفرست." });
   Object.assign(job, { status: "queued", error: null });
   save();
   enqueue(job);
   res.json(jobView(job));
+}));
+
+// ---------- admin: users and their plans, the plans themselves (only ADMIN_PHONE) ----------
+const requireAdmin = [requireUser, (req, res, next) => (isAdmin(req.user) ? next() : res.status(403).json({ error: "دسترسی ندارید." }))];
+const adminUser = (u) => {
+  const jobs = db.jobs.filter((j) => j.userId === u.id);
+  return {
+    id: u.id, phone: u.phone, name: u.name, createdAt: u.createdAt, admin: isAdmin(u) || undefined,
+    plan: u.plan || null, planUntil: u.planUntil || null, effective: planOf(db, u).id, note: u.adminNote || "",
+    used: usageOf(db, u), jobs: jobs.length, failed: jobs.filter((j) => j.status === "error").length,
+    lastAt: jobs.reduce((a, j) => Math.max(a, j.createdAt), 0) || null, tokens: u.usage?.tokens || 0, cost: u.usage?.cost || 0,
+  };
+};
+app.get("/api/admin", requireAdmin, (_req, res) => res.json({
+  plans: Object.values(db.plans), defaultPlan: db.settings.defaultPlan,
+  users: Object.values(db.users).map(adminUser).sort((a, b) => (b.lastAt || b.createdAt || 0) - (a.lastAt || a.createdAt || 0)),
+}));
+app.put("/api/admin/users/:id", requireAdmin, wrap(async (req, res) => {
+  const u = db.users[req.params.id];
+  if (!u) return res.status(404).json({ error: "کاربر پیدا نشد." });
+  const { plan, until, note } = req.body || {};
+  if (plan !== undefined) {
+    if (plan !== null && !db.plans[plan]) return res.status(400).json({ error: "این پلن وجود ندارد." });
+    u.plan = plan || null;
+  }
+  if (until !== undefined) {
+    const t = until ? Date.parse(until) : null;
+    if (until && !Number.isFinite(t)) return res.status(400).json({ error: "تاریخ پایان نامعتبر است." });
+    u.planUntil = t;
+  }
+  if (note !== undefined) u.adminNote = String(note || "").slice(0, 200);
+  save();
+  res.json(adminUser(u));
+}));
+app.put("/api/admin/plans/:id", requireAdmin, wrap(async (req, res) => {
+  const p = cleanPlan({ ...req.body, id: req.params.id });
+  db.plans[p.id] = p;
+  save();
+  res.json(p);
+}));
+app.delete("/api/admin/plans/:id", requireAdmin, (req, res) => {
+  const id = req.params.id;
+  if (id === "none") return res.status(400).json({ error: "پلن «غیرفعال» حذف نمی‌شود." });
+  if (id === db.settings.defaultPlan) return res.status(400).json({ error: "اول پلن پیش‌فرض را عوض کنید." });
+  delete db.plans[id]; // users still on it fall back to the default plan (planOf)
+  save();
+  res.json({ ok: true });
+});
+app.put("/api/admin/settings", requireAdmin, (req, res) => {
+  if (!db.plans[req.body?.defaultPlan]) return res.status(400).json({ error: "این پلن وجود ندارد." });
+  db.settings.defaultPlan = req.body.defaultPlan;
+  save();
+  res.json({ defaultPlan: db.settings.defaultPlan });
 });
 
 // uploads left unfinished for 15 min (phone closed the page, lost Wi-Fi…) → mark failed and free the disk
@@ -268,9 +342,15 @@ setInterval(() => {
 
 // ---------- start (listen on all interfaces so phones on the same Wi-Fi can connect) ----------
 const port = Number(process.env.PORT || 3001);
-app.listen(port, "0.0.0.0", () => {
+const server = express();
+server.disable("x-powered-by");
+// "/creator" → "/creator/": the page's relative URLs need the trailing slash
+if (BASE) server.use((req, res, next) => (req.path === BASE ? res.redirect(301, BASE + "/" + (req.originalUrl.slice(BASE.length) || "")) : next()));
+server.use(BASE || "/", app);
+server.listen(port, "0.0.0.0", () => {
   const ips = Object.values(os.networkInterfaces()).flat().filter((i) => i && i.family === "IPv4" && !i.internal).map((i) => i.address);
   console.log(`Content Creator Expert  ${demoMode ? "(DEMO: no GAPGPT_API_KEY)" : `(model: ${MODEL})`}  ${smsEnabled ? "" : "(SMS off: codes are shown on screen)"}`);
-  console.log(`  this computer:  http://localhost:${port}`);
-  for (const ip of ips) console.log(`  on your phone:  http://${ip}:${port}`);
+  console.log(`  this computer:  http://localhost:${port}${BASE}/`);
+  for (const ip of ips) console.log(`  on your phone:  http://${ip}:${port}${BASE}/`);
+  if (!process.env.ADMIN_PHONE) console.log("  (no ADMIN_PHONE: nobody can open the admin page)");
 });

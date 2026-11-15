@@ -11,6 +11,18 @@ npm start              # prints the address to open on your phone (same Wi-Fi)
 ```
 Without Kavenegar settings the login code is shown on screen (demo). Without a GapGPT key the app returns sample output.
 
+## Plans and admin
+- `ADMIN_PHONE` = your number: you get **Settings → پنل مدیریت**: every user, their plan, an optional end date, a note,
+  their use (today / last 30 days, tokens); edit plans (reels per day, reels per 30 days, posts per day; empty = unlimited,
+  0 = not allowed) and the plan new users get.
+- New users get the default plan, **غیرفعال** at first: they can sign in but make nothing until you give them a plan
+  (an invite-only beta). Failed jobs do not count. "Today" is the day in Iran. The admin has no limits.
+- Test it without tokens: `node scripts/admin-ui-server.mjs` → http://localhost:3011/creator/ (admin 09120000000, own data folder).
+
+## Under a path (BASE_URL)
+`BASE_URL=/creator npm start` serves everything at `/creator/` (`/creator` redirects there), so several apps can share one
+domain / container behind a reverse proxy. The page uses only relative URLs, so a proxy that strips the prefix works too.
+
 ## Stack
 - Node.js + Express, JSON file storage in `data/` (no database)
 - GapGPT (OpenAI-compatible) via the `openai` SDK — `src/ai.js`

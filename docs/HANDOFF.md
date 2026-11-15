@@ -506,3 +506,19 @@ Talk, film and b-roll: rubric only (1 / 1 / 1 except `texts` on two runs: a 6-wo
 
 **Next:** fix 1–3 (offline, small), replay the saved v2 plans through the fixed code to check, then decide
 whether moments mode becomes the default for quiz/talk.
+
+### 2026-11-15 — plans, admin page, BASE_URL (offline, 0 tokens)
+
+User decisions: Persian-speaking creators first, Instagram first, let real people try it soon; only the user is admin
+and assigns plans; the app must run under a `BASE_URL` (later several apps in one Docker container).
+- `src/plans.js`: plans in `db.plans` (none / trial / pro by default, admin-editable), `db.settings.defaultPlan`
+  (`none` = invite-only), optional end date per user, admin = `ADMIN_PHONE`. Limits checked on new reel, revise,
+  post and retry (403 with a Persian reason). Failed jobs don't count; day = Tehran calendar day; month = 30 days.
+- Admin page inside the app (`#/admin`, only for the admin): users with plan / end date / note / use, plans editor,
+  default plan. API `/api/admin*` (403 for others). Users see their plan and use in Settings; blocked users see a notice.
+- `BASE_URL`: the app is an express Router mounted at the base; the page uses relative URLs only (`rel()`), manifest
+  `start_url` relative. Checked in the browser at `/creator/` (login, blocked user, admin assigns trial, 2 demo reels,
+  3rd refused, video + cover play from `/creator/media/...`) and at the root.
+- Existing users in the real `data/db.json` have no plan → they fall under the default plan (`none`) until assigned.
+- Tests: `npm run test:plans` (19). Not done yet for a public beta: parallel-render limit, upload length limit,
+  old-job cleanup, hosting (Liara or own server), the default model for the beta, real SMS.

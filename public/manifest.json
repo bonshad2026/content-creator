@@ -3,7 +3,7 @@
   "short_name": "محتواساز",
   "dir": "rtl",
   "lang": "fa",
-  "start_url": "/#/home",
+  "start_url": "./#/home",
   "display": "standalone",
   "background_color": "#f6f5fb",
   "theme_color": "#6d4aff",

@@ -19,7 +19,8 @@
     "stickers": "node scripts/get-stickers.mjs",
     "music": "node scripts/get-music.mjs",
     "demo": "node scripts/demo-server.mjs",
-    "rescore": "node scripts/rescore.mjs"
+    "rescore": "node scripts/rescore.mjs",
+    "test:plans": "node scripts/test-plans.mjs"
   },
   "dependencies": {
     "@tensorflow/tfjs": "^4.22.0",
