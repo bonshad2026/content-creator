@@ -348,6 +348,7 @@ views.create = () => {
   const P = S.pick; // [{id, file, kind, frames|null}]
   S.mode ||= "separate";
   S.out ||= "reel"; // photos: "reel" (default) or "text"
+  S.len ||= "auto"; // reel length: "auto" (the brief / the material decides) or 15 / 30 / 60 s
   let uploading = false;
   const render = () => {
     const hasVideo = P.some((p) => p.kind === "video");
@@ -361,6 +362,7 @@ views.create = () => {
       ${P.length && !hasVideo ? `<h3 style="margin-top:16px">خروجی</h3><div class="seg"><button data-o="reel" class="${S.out === "reel" ? "on" : ""}">🎬 ریل ویدیویی</button><button data-o="text" class="${S.out === "text" ? "on" : ""}">📝 فقط متن</button></div>` : ""}
       ${asReel && P.length ? `<p class="muted" style="margin-top:12px">🎬 ${P.length > 1 ? "همه با هم یه ریل می‌شن" : hasVideo ? "ویدیوت ادیت می‌شه" : "عکست ریل می‌شه"}: ${hasVideo ? "بهترین تیکه‌ها، متن فارسی، زیرنویس حرف‌ها" : "حرکت آروم روی عکس، متن فارسی"}، قالب عمودی و کاور.</p>`
         : P.length > 1 ? `<h3 style="margin-top:16px">این ${fa(P.length)} عکس…</h3><div class="seg"><button data-m="separate" class="${S.mode === "separate" ? "on" : ""}">هر کدوم یه پست جدا</button><button data-m="carousel" class="${S.mode === "carousel" ? "on" : ""}">همه با هم یه پست</button></div>` : ""}
+      ${asReel && P.length ? `<h3 style="margin-top:16px">طول ریل</h3><div class="seg">${[["auto", "خودکار"], ["15", "۱۵ ثانیه"], ["30", "۳۰ ثانیه"], ["60", "۶۰ ثانیه"]].map(([v, t]) => `<button data-len="${v}" class="${S.len === v ? "on" : ""}">${t}</button>`).join("")}</div>` : ""}
       <h3 style="margin-top:16px">موضوع یا هدف پست (اختیاری)</h3>
       <input id="brief" placeholder="مثلاً: معرفی محصول جدید، فروش بیشتر" value="${esc(S.brief || "")}" />
       <div class="spacer"></div>
@@ -371,6 +373,7 @@ views.create = () => {
     document.querySelectorAll("[data-rm]").forEach((b) => (b.onclick = () => { if (uploading) return; P.splice(P.findIndex((p) => p.id === b.dataset.rm), 1); render(); }));
     document.querySelectorAll("[data-m]").forEach((b) => (b.onclick = () => { S.mode = b.dataset.m; render(); }));
     document.querySelectorAll("[data-o]").forEach((b) => (b.onclick = () => { S.out = b.dataset.o; render(); }));
+    document.querySelectorAll("[data-len]").forEach((b) => (b.onclick = () => { S.len = b.dataset.len; render(); }));
     document.getElementById("gen").onclick = () => (asReel ? submitReel() : submitPosts());
   };
   const rerender = () => location.hash === "#/create" && !uploading && render();
@@ -410,7 +413,7 @@ views.create = () => {
       btn.innerHTML = '<span class="spinner"></span> آماده‌سازی…';
       const blobs = await Promise.all(P.map(async (p) => (p.kind === "video" ? p.file : dataUrlToBlob((await imageFrames(p.file, 1280))[0]))));
       const totalBytes = blobs.reduce((a, b) => a + b.size, 0);
-      job = await api("/api/reels", { method: "POST", body: { brief: S.brief || "", files: P.map((p) => ({ type: p.kind })) } });
+      job = await api("/api/reels", { method: "POST", body: { brief: S.brief || "", length: S.len === "auto" ? null : +S.len, files: P.map((p) => ({ type: p.kind })) } });
       let done = 0;
       for (let i = 0; i < blobs.length; i++) {
         await uploadFile(

@@ -147,7 +147,7 @@ app.post("/api/jobs/:id/revise", requireUser, (req, res) => {
     }
   }
   const job = {
-    id, userId: req.user.id, kind: "reel", brief: parent.brief, frames: [], inputs: parent.inputs.map((i) => ({ ...i })),
+    id, userId: req.user.id, kind: "reel", brief: parent.brief, length: parent.length ?? null, frames: [], inputs: parent.inputs.map((i) => ({ ...i })),
     revise: { parentId: parent.id, note }, brand: parent.brand ?? brandSnapshot(req.user),
     status: "queued", stage: null, output: null, error: null, usage: { tokens: 0, cost: 0 }, createdAt: Date.now(),
   };
@@ -184,6 +184,8 @@ app.post("/api/reels", requireUser, (req, res) => {
   const id = newId();
   const job = {
     id, userId: req.user.id, kind: "reel", brief: String(req.body.brief || "").slice(0, 300), frames: [],
+    // chosen reel length (s); null = from the brief or the material
+    length: [15, 30, 60].includes(Number(req.body.length)) ? Number(req.body.length) : null,
     inputs: files.map((f, i) => ({ n: i + 1, type: f.type === "image" ? "image" : "video", file: `in${i + 1}.${f.type === "image" ? "jpg" : "mp4"}`, uploaded: false })),
     brand: brandSnapshot(req.user), status: "uploading", stage: null, output: null, error: null, usage: { tokens: 0, cost: 0 }, createdAt: Date.now(),
   };

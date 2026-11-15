@@ -6,7 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { runReel } from "../src/reel.js";
-import { ffmpeg, probe, renderCover, buildAss, LOOKS, TRANSITIONS } from "../src/media.js";
+import { ffmpeg, ffmpegScan, probe, renderCover, buildAss, loudnessOf, LOOKS, TRANSITIONS } from "../src/media.js";
 
 const FX = path.resolve("data/test-fixtures"), OUT = path.resolve("data/test-out");
 fs.mkdirSync(OUT, { recursive: true });
@@ -354,7 +354,31 @@ const CASES = {
       subtitles: false, music: "none", look: "bw", transitions: ["dip"], coverFrom: { n: 1, s: 1 }, cover: "سیاه و سفید",
     },
   },
+  // game recording (its own sound, no speech), no music: the source must pass through untouched (no voice filters,
+  // same tone balance as the source); only the level changes
+  "soundtrack-passthrough": {
+    files: [["video", "game.mp4"]],
+    expectAudio: { 1: "music_or_mixed" }, spectrum: { n: 1, s: 2, e: 14 },
+    plan: { clips: [{ n: 1, s: 2, e: 14 }], texts: [], subtitles: false, music: "none", look: "natural", transitions: [], coverFrom: { n: 1, s: 3 }, cover: "" },
+  },
 };
+
+// length enforced in code (P1-2): the same plans with a chosen length; the final video must land within ±10 %
+CASES["length-trim-30"] = { ...CASES["talk-jumpcuts-karaoke"], length: 30 };
+CASES["length-extend-30"] = {
+  files: [["video", "game.mp4"], ["image", "quiz.jpg"]], length: 30,
+  plan: { clips: [{ n: 1, s: 2, e: 6 }, { n: 2, s: 0, e: 3 }, { n: 1, s: 20, e: 24 }], texts: [{ t: 0, d: 2.5, text: "جوابشو می‌دونی؟", pos: "top" }], subtitles: false, music: "energetic", look: "natural", transitions: [], coverFrom: { n: 1, s: 3 }, cover: "" },
+};
+
+// Arcane run 2 replayed offline (copyrighted, local only): the real plan + the real Whisper junk it got.
+// Before P0-2 this rendered with voice filters on the film mix and the film audio at full level under the music.
+const arcane = path.resolve("data/test-out/arcane-plan2.json");
+if (fs.existsSync(arcane)) {
+  const a = JSON.parse(fs.readFileSync(arcane, "utf8"));
+  CASES["arcane-soundtrack"] = { files: [["video", "arcane.mp4"]], transcript: a.transcript, spokenLang: "persian", plan: a.plan, expectAudio: { 1: "music_or_mixed" } };
+  // asked 60 s, the real model planned 55 s → code makes it 60
+  CASES["length-arcane-60"] = { ...CASES["arcane-soundtrack"], length: 60 };
+}
 
 const loudness = async (file) => {
   const log = await ffmpeg(["-i", file, "-af", "ebur128=framelog=quiet", "-f", "null", "-"]).catch((e) => e.message);
@@ -362,6 +386,41 @@ const loudness = async (file) => {
 };
 const sheet = (video, out, cols = 8) =>
   ffmpeg(["-i", video, "-vf", `fps=1,scale=150:-2,tile=${cols}x3`, "-frames:v", "1", out]).catch(() => {});
+
+// tone balance: level of 3 bands relative to the whole signal (dB). Equal within ~1.5 dB = the sound was not reshaped.
+async function bands(file, s = 0, e = 0) {
+  const span = e ? ["-ss", String(s), "-t", String(e - s)] : [];
+  const rms = async (af) => {
+    const log = await ffmpegScan([...span, "-i", file, "-vn", "-af", `${af}astats=measure_perchannel=none:measure_overall=RMS_level`, "-f", "null", "-"], /RMS level dB/);
+    return +(log.match(/RMS level dB: (-?[\d.]+)/)?.[1] ?? NaN);
+  };
+  const all = await rms("");
+  return [await rms("lowpass=f=250,lowpass=f=250,"), await rms("highpass=f=250,lowpass=f=4000,"), await rms("highpass=f=4000,highpass=f=4000,")].map((b) => b - all);
+}
+
+// audio rules (P0-2 / P0-3). Returns a failure note, or "" when all hold.
+async function audioChecks(c, o, dir, out) {
+  const fails = [];
+  const graph = fs.readFileSync(path.join(dir, "render-filter.txt"), "utf8");
+  const classes = Object.values(o.audio || {});
+  for (const [n, want] of Object.entries(c.expectAudio || {})) if (!String(o.audio?.[n]).startsWith(want)) fails.push(`input ${n} is ${o.audio?.[n]}, want ${want}`);
+  // voice processing and ducking only when some input is speech
+  if (!classes.some((k) => k.startsWith("speech"))) {
+    for (const f of ["afftdn", "deesser", "acompressor", "sidechaincompress"]) if (graph.includes(f)) fails.push(`${f} without speech`);
+  }
+  if (!classes.some((k) => k.endsWith("+denoise")) && graph.includes("afftdn")) fails.push("afftdn without a noisy input");
+  // footage with its own soundtrack under our music: muted, never both at full level
+  if (o.music && classes.includes("music_or_mixed") && !graph.includes("volume=0,")) fails.push("own soundtrack not muted under music");
+  if (graph.includes("loudnorm")) fails.push("dynamic loudnorm still in the graph");
+  const ld = await loudnessOf(out);
+  if (ld.tp > -1.0) fails.push(`true peak ${ld.tp} dBTP`);
+  if (c.spectrum) {
+    const src = await bands(path.join(FX, c.files[c.spectrum.n - 1][1]), c.spectrum.s, c.spectrum.e), dst = await bands(out);
+    const worst = Math.max(...src.map((b, i) => Math.abs(b - dst[i])));
+    if (!(worst <= 1.5)) fails.push(`tone changed by ${worst.toFixed(1)} dB (src ${src.map((x) => x.toFixed(1))} out ${dst.map((x) => x.toFixed(1))})`);
+  }
+  return fails.join("; ");
+}
 
 const filter = process.argv[2] || "";
 const results = [];
@@ -405,17 +464,18 @@ for (const [name, c] of Object.entries(CASES)) {
   const t0 = Date.now();
   try {
     const brand = c.brand ? { ...c.brand, logo: c.brand.logo ? path.join(FX, c.brand.logo) : null } : undefined;
-    const r = await runReel({ id, inputs, brief: "", brand }, "Niche: بازی کوییز فوتبالی", () => {}, { plan: c.plan, transcript: c.transcript || [], spokenLang: c.spokenLang });
+    const r = await runReel({ id, inputs, brief: "", brand, length: c.length }, "Niche: بازی کوییز فوتبالی", () => {}, { plan: c.plan, transcript: c.transcript || [], spokenLang: c.spokenLang });
     const out = path.join(OUT, `${name}.mp4`);
     fs.copyFileSync(path.join(dir, "out.mp4"), out);
     fs.copyFileSync(path.join(dir, "cover.jpg"), path.join(OUT, `${name}-cover.jpg`));
     await sheet(out, path.join(OUT, `${name}-sheet.jpg`));
     const real = (await probe(out)).duration, lufs = await loudness(out), o = r.output;
-    const durOk = Math.abs(real - o.duration) <= 1.0, loudOk = (!o.music && !o.narration) || (lufs >= -18 && lufs <= -12); // no voice and no music → only a few sound effects, loudness is not meaningful
+    const durOk = Math.abs(real - o.duration) <= 1.0, loudOk = (!o.music && !o.narration) || (lufs >= -16 && lufs <= -13); // no voice and no music → only a few sound effects, loudness is not meaningful. Peaky mixes (many sound effects) land up to 2 dB under -14: the limiter takes the peaks, the gain is not raised again
+    const audioFail = [await audioChecks(c, o, dir, out), c.length && Math.abs(real - c.length) > c.length * 0.1 && `length ${real.toFixed(1)} s, asked ${c.length}`].filter(Boolean).join("; ");
     results.push({
-      case: name, ok: durOk && loudOk && r.usage.tokens === 0, sec: ((Date.now() - t0) / 1000).toFixed(0),
+      case: name, ok: durOk && loudOk && !audioFail && r.usage.tokens === 0, sec: ((Date.now() - t0) / 1000).toFixed(0),
       dur: real.toFixed(1), lufs: lufs.toFixed(1), tokens: r.usage.tokens,
-      note: [o.look, o.transitions.length && `${o.transitions.length} transitions`, o.jumpCuts && `${o.jumpCuts} jump cuts`, o.emphasis && `${o.emphasis} emphasis`, o.smartCrop && "smart crop", o.music && "music", o.subtitles && "karaoke"].filter(Boolean).join(", "),
+      note: [o.look, o.transitions.length && `${o.transitions.length} transitions`, o.jumpCuts && `${o.jumpCuts} jump cuts`, o.emphasis && `${o.emphasis} emphasis`, o.smartCrop && "smart crop", o.music && "music", o.subtitles && "karaoke", audioFail].filter(Boolean).join(", "),
     });
   } catch (e) {
     results.push({ case: name, ok: false, sec: ((Date.now() - t0) / 1000).toFixed(0), note: e.message.slice(0, 300) });

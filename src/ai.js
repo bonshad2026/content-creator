@@ -9,7 +9,7 @@
 //  • Every request's token count and cost are recorded and shown to the user.
 import OpenAI from "openai";
 import { mockProfile, mockGeneration } from "./mock.js";
-import { LOOKS, TRANSITIONS, TEXT_ANIMS, LEAK_STYLES, listStickers } from "./media.js";
+import { LOOKS, LEAK_STYLES, listStickers } from "./media.js";
 import { RECIPES, RECIPE_NAMES } from "./recipes.js";
 
 export const MODEL = process.env.AI_MODEL || "claude-opus-5-5";
@@ -17,6 +17,9 @@ export const demoMode = !process.env.GAPGPT_API_KEY;
 const client = demoMode
   ? null
   : new OpenAI({ apiKey: process.env.GAPGPT_API_KEY, baseURL: process.env.GAPGPT_BASE_URL || "https://api.gapgpt.app/v1" });
+
+// reply ceiling for a full edit plan (only a cap: the reply is paid by its real length)
+const PLAN_LIMIT = 6000;
 
 const img = (b64) => ({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${b64}` } });
 
@@ -37,21 +40,91 @@ function parseJson(text) {
   }
 }
 
-async function call(system, content, maxTokens) {
-  const usage = { tokens: 0, cost: 0 };
+/**
+ * A reply cut off mid-JSON (finish=length): close it at the last complete value instead of paying for the request
+ * again. Drops the unfinished tail (an open string, a half-written object) and closes the open brackets.
+ */
+export function repairJson(text) {
+  const s = text.replace(/```(?:json)?/gi, "");
+  const a = s.indexOf("{");
+  if (a < 0) return null;
+  const stack = [];
+  let inStr = false, esc = false, lastSafe = -1, safeStack = null;
+  for (let i = a; i < s.length; i++) {
+    const ch = s[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === "{" || ch === "[") stack.push(ch === "{" ? "}" : "]");
+    else if (ch === "}" || ch === "]") stack.pop();
+    // a safe cut point: right after a finished value: between array items or top-level keys (a comma inside a nested
+    // object would keep a half-written clip / text)
+    const commaOk = ch === "," && (stack.length === 1 || stack[stack.length - 1] === "]");
+    if (commaOk || ch === "}" || ch === "]") {
+      lastSafe = ch === "," ? i : i + 1;
+      safeStack = stack.slice();
+      if (!stack.length) return parseJson(s.slice(a, i + 1));
+    }
+  }
+  if (lastSafe < 0) return null;
+  try {
+    return JSON.parse(s.slice(a, lastSafe).replace(/,\s*$/, "") + safeStack.reverse().join(""));
+  } catch {
+    return null;
+  }
+}
+
+// Every real request is logged here (one JSON line each): what the tokens went to, and whether caching works.
+const USAGE_LOG = process.env.USAGE_LOG || "data/usage-log.jsonl";
+
+/**
+ * One request. max_tokens is only a ceiling (you pay for what is written), so it is set high enough that a normal
+ * reply is never cut off. If it still is: the JSON is repaired locally (no second payment); only if that fails is
+ * the request sent once more with a 1.5x limit. An unparseable complete reply is retried once as before.
+ * AI_DRYRUN=<file>: nothing is sent; the request is written to that file and a DRYRUN error is thrown (token budget).
+ */
+async function call(system, content, maxTokens, label = "") {
+  if (process.env.AI_DRYRUN) {
+    const fs = await import("node:fs");
+    fs.writeFileSync(process.env.AI_DRYRUN, JSON.stringify({ label, maxTokens, system, content }));
+    throw Object.assign(new Error("DRYRUN"), { dryRun: true });
+  }
+  const usage = { tokens: 0, cost: 0, requests: [] };
+  let limit = maxTokens;
   for (let attempt = 1; attempt <= 2; attempt++) {
     const res = await client.chat.completions.create({
       model: MODEL,
-      max_tokens: maxTokens,
+      max_tokens: limit,
       reasoning_effort: "low",
       messages: [{ role: "system", content: system }, { role: "user", content }],
     });
-    usage.tokens += res.usage?.total_tokens || 0;
-    usage.cost += res.usage?.cost || 0;
+    const u = res.usage || {};
+    const finish = res.choices?.[0]?.finish_reason;
+    const rec = {
+      at: new Date().toISOString(), label, model: MODEL, attempt, finish, limit,
+      prompt: u.prompt_tokens ?? null, reply: u.completion_tokens ?? null, total: u.total_tokens ?? null,
+      cached: u.prompt_tokens_details?.cached_tokens ?? u.cache_read_input_tokens ?? null,
+      reasoning: u.completion_tokens_details?.reasoning_tokens ?? null, cost: u.cost ?? null,
+    };
+    usage.tokens += u.total_tokens || 0;
+    usage.cost += u.cost || 0;
+    usage.requests.push(rec);
+    try {
+      const fs = await import("node:fs");
+      fs.appendFileSync(USAGE_LOG, JSON.stringify(rec) + "\n");
+    } catch {}
     const text = res.choices?.[0]?.message?.content || "";
-    const data = parseJson(text);
-    if (data) return { data, usage };
-    console.warn(`unparseable reply (attempt ${attempt}, finish=${res.choices?.[0]?.finish_reason}):`, text.slice(0, 300));
+    const data = parseJson(text) || (finish === "length" ? repairJson(text) : null);
+    if (data) {
+      if (finish === "length") console.warn(`reply cut off at ${limit} tokens, repaired locally (${label})`);
+      return { data, usage };
+    }
+    console.warn(`unparseable reply (attempt ${attempt}, finish=${finish}):`, text.slice(0, 300));
+    if (finish === "length") limit = Math.round(limit * 1.5);
   }
   throw new Error("پاسخ مدل قابل خواندن نبود. دوباره تلاش کنید.");
 }
@@ -91,19 +164,24 @@ export async function learnFromSamples(style, samplesB64) {
       'Reply ONLY with JSON: {"voice":"1-2 sentences on how they likely talk/present","visual":"1-2 sentences: framing, colours, on-screen text, pace","dos":["max 4"],"donts":["max 3"]}. ' +
       "Write the values in the creator's content language.",
     content,
-    700
+    700,
+    "profile"
   );
 }
 
-/** Speech → timed text (Whisper). Returns [{start, end, text}] or [] if no clear speech. */
-export async function transcribe(audioFile, hint = "") {
-  if (demoMode) return { segments: [], cost: 0 };
+/**
+ * Speech → timed text (Whisper). Every line keeps Whisper's own confidence stats (noSpeech, logprob, compression);
+ * src/audio.js decides which lines are trusted and whether the input is speech at all.
+ * No `prompt` is sent: the Persian hint words biased language detection on English / non-speech audio, and the
+ * planner corrects mis-heard words in its `subs` anyway. `language` (ISO code) only when it is known.
+ */
+export async function transcribe(audioFile, language = "") {
+  if (demoMode) return { segments: [], language: "", duration: 0, cost: 0 };
   const fs = await import("node:fs");
-  // `prompt` = context words for Whisper (topic, common app words) → fewer mis-heard words like "گانلود" for "دانلود"
   const r = await client.audio.transcriptions.create({
     model: "whisper-1", file: fs.createReadStream(audioFile), response_format: "verbose_json",
     timestamp_granularities: ["word", "segment"], // word times → karaoke subtitles (same price)
-    ...(hint ? { prompt: hint.slice(0, 400) } : {}),
+    ...(language ? { language } : {}),
   });
   // hand the words out to their segments in order (times at segment edges are often shared, so count instead)
   const words = (r.words || []).map((w) => ({ start: w.start, end: w.end, text: String(w.word).trim() }));
@@ -113,12 +191,11 @@ export async function transcribe(audioFile, hint = "") {
       const count = s.text.trim().split(/\s+/).filter(Boolean).length;
       const own = words.slice(wi, wi + count);
       wi += count;
-      return { start: s.start, end: s.end, text: s.text.trim(), words: own, noSpeech: s.no_speech_prob ?? 0 };
+      return { start: s.start, end: s.end, text: s.text.trim(), words: own, noSpeech: s.no_speech_prob ?? 0, logprob: s.avg_logprob ?? null, compression: s.compression_ratio ?? null };
     })
-    .filter((s) => s.noSpeech < 0.6 && s.text)
-    .map(({ noSpeech, ...s }) => s);
+    .filter((s) => s.text);
   // Whisper auto-detects the spoken language (Persian, English, …)
-  return { segments, language: r.language || "", cost: ((r.duration || 0) / 60) * 0.006 };
+  return { segments, language: r.language || "", duration: r.duration || 0, cost: ((r.duration || 0) / 60) * 0.006 };
 }
 
 /**
@@ -126,17 +203,17 @@ export async function transcribe(audioFile, hint = "") {
  * inputs: [{n, type, duration, hasSpeech, frames:[{t, b64}]}], transcript: [{n, start, end, text}]
  */
 export async function planReel(profileText, inputs, transcript, brief, spokenLang = "", moods = [], target = null) {
-  if (demoMode) return mockReelPlan(inputs);
+  if (demoMode && !process.env.AI_DRYRUN) return mockReelPlan(inputs);
   const content = [{ type: "text", text: `Goal / topic of this post: ${brief || "(none, pick the best angle from the media)"}` }];
   if (target) content.push({ type: "text", text: `TARGET LENGTH: the creator asked for about ${target} s. Make the clips add up to ${Math.round(target * 0.9)}-${Math.round(target * 1.05)} s (a clip with speed lasts (e-s)/speed).` });
   for (const inp of inputs) {
     if (inp.sheet) {
-      content.push({ type: "text", text: `Input ${inp.n}: video, ${inp.duration.toFixed(1)}s${inp.hasSpeech ? ", has speech" : ""}${inp.scenes?.length ? `, shot changes at ${inp.scenes.slice(0, 100).map((t) => t.toFixed(1)).join(", ")}s` : ""}. ` +
+      content.push({ type: "text", text: `Input ${inp.n}: video, ${inp.duration.toFixed(1)}s${audioNote(inp)}${inp.scenes?.length ? `, shot changes at ${inp.scenes.slice(0, 100).map((t) => t.toFixed(1)).join(", ")}s` : ""}. ` +
         `Contact sheet: ${inp.sheet.count} frames spread over the whole video, in reading order (left to right, top to bottom), each labelled with its time in seconds. Use moments from ALL of it, not only one part:` });
       content.push(img(inp.sheet.b64));
       continue;
     }
-    content.push({ type: "text", text: inp.type === "image" ? `Input ${inp.n}: photo (slow zoom-in; you choose 1.5-8s on screen via its clip s=0,e=seconds)` : `Input ${inp.n}: video, ${inp.duration.toFixed(1)}s${inp.hasSpeech ? ", has speech" : ""}${inp.scenes?.length ? `, shot changes at ${inp.scenes.slice(0, 15).map((t) => t.toFixed(1)).join(", ")}s` : ", one continuous shot"}. Frames:` });
+    content.push({ type: "text", text: inp.type === "image" ? `Input ${inp.n}: photo (slow zoom-in; you choose 1.5-8s on screen via its clip s=0,e=seconds)` : `Input ${inp.n}: video, ${inp.duration.toFixed(1)}s${audioNote(inp)}${inp.scenes?.length ? `, shot changes at ${inp.scenes.slice(0, 15).map((t) => t.toFixed(1)).join(", ")}s` : ", one continuous shot"}. Frames:` });
     for (const f of inp.frames) {
       if (inp.type !== "image") content.push({ type: "text", text: `@${f.t.toFixed(1)}s` });
       content.push(img(f.b64));
@@ -150,10 +227,12 @@ export async function planReel(profileText, inputs, transcript, brief, spokenLan
     });
 
   // static rules first, the creator's style last: the long identical prefix can be cached by the provider (cheaper repeats)
-  // a long edit (many clips) needs a longer reply: with 1800 the plan got cut off, failed to parse and was paid for twice
-  const long = (target || 0) >= 40 || inputs.some((i) => i.sheet) || transcript.length > 12;
-  return call(`${reelRules(moods)}\n\nCREATOR STYLE:\n${profileText}`, content, long ? 3500 : 1800);
+  // the reply ceiling costs nothing unless used: with 1800 a long plan got cut off and was paid for twice (Arcane run 1)
+  return call(`${reelRules(moods)}\n\nCREATOR STYLE:\n${profileText}`, content, PLAN_LIMIT, "plan");
 }
+
+// what the model is told about an input's sound (the code acts on the class; the model only needs to know)
+const audioNote = (inp) => (inp.audioClass === "speech" || (!inp.audioClass && inp.hasSpeech) ? ", has speech" : inp.audioClass === "music_or_mixed" ? ", has its own soundtrack (muted under the background music you pick; with music \"none\" it plays as is)" : "");
 
 /** The editor's rulebook (identical for every reel → cacheable). The detailed craft lives in code (recipes.js, reel.js). */
 function reelRules(moods) {
@@ -181,19 +260,16 @@ function reelRules(moods) {
       ? `Background music: pick the mood that fits the post from [${moods.join(", ")}], or "none" if music would hurt it (e.g. calm talk where every word matters). It ducks under speech automatically.\n`
       : "") +
     `Look (colour grade of the whole reel), one of [${Object.keys(LOOKS).join(", ")}]: fit the creator's style and the mood; "natural" if the footage already looks good.\n` +
-    `Transitions: one per change between your clips, in order (clips-1 items), from [${Object.keys(TRANSITIONS).join(", ")}]. ` +
-    "Fast/fun content: whip, slide, push, zoom, flash, wind, slice; calm/emotional: fade, dip, blur; 'cut' when the next clip continues the same moment. Vary them.\n" +
+    "Transitions and text animations come from the recipe automatically (a continuous take gets a plain cut). Optional per text: \"anim\":\"highlight\" for the key answer / reveal, \"shake\" for a punchline.\n" +
     "emphasis: up to 3 narration line numbers (#) with the key sentences: they get a punch-in zoom and an impact sound.\n" +
-    `Text animation (anim) per on-screen text, from [${TEXT_ANIMS.join(", ")}]: words = appears word by word (good for a hook), ` +
-    "highlight = text on a coloured box (the key word/answer), shake = punchline, pop / slide-up / slide-right / bounce / wipe for variety. Mix them.\n" +
     'marks (optional, max 6, use where they add energy, not everywhere): {"type":"arrow"|"circle","t","d","n":input,"x":0-1,"y":0-1} with x,y = where it is in THAT input\'s frames you saw ' +
     '(arrow tip lands on it); {"type":"bar","t","d"} = a countdown bar that empties over d seconds (quiz timer, "wait for it"); ' +
     (listStickers().length ? `{"type":"sticker","name":one of [${listStickers().join(", ")}],"t","d","x","y","s":size 0.15-0.4} a colour emoji that bounces in (x,y in the final 9:16 frame, or add "n" for a spot in that input); ` : "") +
     '{"type":"sparkle"|"burst","t","x","y"} stars / comic speed lines around a spot (a reveal, a win); {"type":"confetti","t"} (celebration); ' +
     `{"type":"leak","t","style":one of [${LEAK_STYLES.join(", ")}]} a 2 s light-leak glow (intro, a warm/emotional moment, over a transition).\n\n` +
-    'Reply ONLY with JSON: {"recipe":"...","clips":[{"n":1,"s":0.0,"e":4.2}],"framed":[],"texts":[{"t":0,"d":2.5,"text":"...","pos":"top","anim":"words"}],"marks":[],"subtitles":true,"subs":[],' +
+    'Reply ONLY with JSON: {"recipe":"...","clips":[{"n":1,"s":0.0,"e":4.2}],"framed":[],"texts":[{"t":0,"d":2.5,"text":"...","pos":"top"}],"marks":[],"subtitles":true,"subs":[],' +
     (moods.length ? '"music":"mood or none",' : "") +
-    '"look":"natural","transitions":["whip-left"],"emphasis":[0],"coverFrom":{"n":1,"s":2.0},"cover":"cover text, max 5 words","cta":"...","hooks":["3 alternative first lines"],"caption":"post text WITHOUT hashtags","hashtags":["#..."],"tips":["max 2 short tips"]}'
+    '"look":"natural","emphasis":[0],"coverFrom":{"n":1,"s":2.0},"cover":"cover text, max 5 words","cta":"...","hooks":["3 alternative first lines"],"caption":"post text WITHOUT hashtags","hashtags":["#..."],"tips":["max 2 short tips"]}'
   );
 }
 
@@ -212,7 +288,7 @@ export async function revisePlan(profileText, prevPlan, transcript, note, inputs
     { type: "text", text: `The edit plan you made before:\n${JSON.stringify(prevPlan)}` },
     { type: "text", text: `The creator watched the reel and asks: "${note}"\nReturn the FULL updated plan JSON (same format). Change only what the request needs; keep everything else as it was.` },
   ];
-  return call(`${reelRules(moods)}\n\nCREATOR STYLE:\n${profileText}`, content, 2200);
+  return call(`${reelRules(moods)}\n\nCREATOR STYLE:\n${profileText}`, content, PLAN_LIMIT, "revise");
 }
 
 async function mockReelPlan(inputs) {
@@ -247,6 +323,7 @@ export async function generatePost(profileText, media, brief) {
       'Reply ONLY with JSON: {"hooks":["3 short alternative first lines"],"caption":"post text WITHOUT hashtags","hashtags":["#..."],"cover":"cover/thumbnail text, max 6 words",' +
       `"scenes":${isVideo ? '[{"t":"0-3s","v":"what to show","x":"on-screen text / voice-over"}] (3-5 scenes)' : "[]"},"tips":["max 2 short posting tips"]}`,
     content,
-    1500
+    1500,
+    "post"
   );
 }

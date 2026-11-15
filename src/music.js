@@ -25,11 +25,14 @@ export function listMoods() {
   }
 }
 
-/** Random track of a mood + its beat grid → { file, mood, bpm, beats } or null. */
-export async function pickTrack(mood) {
+/** Small stable hash: the same seed always picks the same item (same plan → same reel). */
+export const seeded = (seed) => [...String(seed)].reduce((h, c) => (Math.imul(h, 31) + c.charCodeAt(0)) >>> 0, 7);
+
+/** A track of a mood (chosen by `seed`, e.g. the job id: varies between reels, never between renders of one) + its beat grid. */
+export async function pickTrack(mood, seed = "") {
   const tracks = tracksOf(mood);
   if (!tracks.length) return null;
-  const file = tracks[Math.floor(Math.random() * tracks.length)];
+  const file = tracks[seeded(`${seed}:${mood}`) % tracks.length];
   let cache = {};
   try {
     cache = JSON.parse(fs.readFileSync(CACHE, "utf8"));

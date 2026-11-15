@@ -30,13 +30,15 @@ upload → probe / scene detection / frames (or contact sheet if >60 s)
 | `src/reel.js` | 657 | The whole pipeline in one function (`runReel`). Too big; see P2. |
 | `src/media.js` | 699 | ffmpeg: analysis, ASS text/shapes, layout, render, audio mix. |
 | `src/ai.js` | ~260 | Prompt (`reelRules`), `planReel`, `revisePlan`, Whisper call. |
+| `src/audio.js` | 68 | Audio class per video (`speech` / `music_or_mixed` / `silent`), trusted Whisper lines, level. |
 | `src/recipes.js` | 80 | 9 editing recipes (rules in code, the AI names one). |
 | `src/vision.js` | 74 | Local face tracking (face-api on TF.js WASM). |
 | `src/jobs.js`, `server.js` | | Queue, API, brand kit, feedback, revise. |
 | `public/app.js` | 658 | Single-page app. |
 | `scripts/test-reel.mjs` | 428 | Offline tests: hand-written plans, 0 tokens. |
 
-Commands: `npm start` (app), `npm run demo` (port 3010, demo AI, separate data), `npm run test:reel` (17 offline cases).
+Commands: `npm start` (app), `npm run demo` (port 3010, demo AI, separate data), `npm run test:reel` (22 offline render
+cases), `npm run test:audio`, `test:ai`, `test:length` (unit tests, seconds), `npm run token-budget` (planner request size, 0 tokens).
 Samples and the earlier report: `demo-output/expert/`.
 
 ## 3. What is verified and what is not
@@ -59,7 +61,7 @@ safe zones, recipes, slow motion, shot matching, bar cropping).
 
 ## 4. Known problems, with cause
 
-### A. Sound is damaged on footage that is not a person talking (P0)
+### A. Sound is damaged on footage that is not a person talking (P0) — fixed by P0-2, see section 9
 - **Symptom:** Arcane run 2 sounded "de-noised" although the source was clean.
 - **Cause (from the code, not from listening):** Whisper returned 4 junk lines. Any surviving line sets
   `inp.hasSpeech = true`. That one flag then does three things:
@@ -68,12 +70,12 @@ safe zones, recipes, slow motion, shot matching, bar cropping).
   3. `bg: false` → the film audio plays at full volume against the added music (`reel.js:621`).
 - **Also suspect:** single-pass `loudnorm` (dynamic mode) can pump on music.
 
-### B. "Has speech" is decided by Whisper junk (P0)
+### B. "Has speech" is decided by Whisper junk (P0) — fixed by P0-2, see section 9
 - On music, fights and noise Whisper invents text. Two filters exist (hint echo, looped phrase); a third kind
   (mixed-language nonsense) passed.
 - The Persian hint words passed as Whisper's `prompt` likely bias language detection to Persian on English audio.
 
-### C. Token cost is not controlled (P1)
+### C. Token cost is not controlled (P1) — partly fixed by P1-1, see section 9
 - A cut-off reply (`finish=length`) is retried blindly and paid twice.
 - The rulebook prompt has grown to roughly 1,800 tokens; nobody has measured each part.
 
@@ -88,8 +90,7 @@ safe zones, recipes, slow motion, shot matching, bar cropping).
 - Cinematic thin text is unreadable on busy footage.
 - 13 of 15 joins were hard cuts; the recipe allows nothing else.
 
-### G. No version control (P0, do first)
-- The project is not a git repository. Every change so far is unrecoverable if something breaks.
+### G. No version control — fixed (P0-1)
 
 ## 5. The plan
 
@@ -212,3 +213,113 @@ The model should choose, not compose. Concretely:
 - The user's real data is in `data/`. Tests and demo mode must never write there except `data/jobs/_test-*` and
   `data/test-out/`.
 - `demo-output/` holds every sample sent to the user.
+
+## 9. Progress log
+
+### 2026-11-15 — P0-1, P0-2, P0-3 done (offline only, 0 tokens)
+- **P0-1:** repo under git (commit `3886193`), `.gitignore` as in decision 6.
+- **P0-2 audio class** (`src/audio.js`, wired in `reel.js` step 2):
+  - `transcribe` now returns every line with `noSpeech`, `logprob`, `compression` and the analysed duration.
+    **No Whisper `prompt` is sent any more** (the Persian hint list and the hint-echo filter are gone); `language`
+    is passed only if known (nothing passes it yet).
+  - A line is trusted unless: no_speech ≥ 0.6, avg_logprob < -1, compression > 2.4, most of its words are 0 s long,
+    or its script contradicts the detected language (Persian with English loanwords is kept).
+  - Class: no audio / RMS < -50 dB → `silent`; trusted lines cover ≥ 20 % of the analysed audio → `speech`;
+    else `music_or_mixed` and its lines are dropped.
+  - Effects: voice chain only for `speech`; `afftdn` only when the noise floor > -50 dB; ducking only with speech;
+    `music_or_mixed` under our music → **muted** (`volume=0`, was 0.3); with music "none" it plays untouched.
+    The planner is told "has its own soundtrack (muted under the music you pick)".
+  - `output.audio` reports the class per input (e.g. `{"1":"speech+denoise"}`).
+- **P0-3 audio tests:**
+  - Loudness is now two-pass linear: render with PCM audio → measure (EBU R128) → one fixed gain to -14 LUFS +
+    a limiter at -2.5 dB → AAC, video copied; then the true peak is measured and, if still above -1 dBTP, the
+    limiter ceiling goes down by the overshoot (max 2 retries). Dynamic `loudnorm` is gone. `KEEP_PRE=<file>` keeps
+    the pass-1 mix for debugging.
+  - Every render writes `render-filter.txt` in the job folder; `test-reel` asserts on it for every case: no
+    voice filters / ducking without speech, no `afftdn` without a noisy input, own soundtrack muted under music,
+    no `loudnorm`, true peak ≤ -1 dBTP, loudness -14 ±1 when music or voice is present.
+  - New cases: `soundtrack-passthrough` (game audio, no music: tone balance of 3 bands must match the source within
+    1.5 dB) and `arcane-soundtrack` (Arcane run 2 replayed from `data/test-out/arcane-plan2.json` with its real
+    Whisper junk → `music_or_mixed`, muted, no voice filters).
+  - Mutation check done: forcing the voice chain on non-speech makes `soundtrack-passthrough` fail.
+  - Full suite: 19/19 after one change: the loudness window is -16..-13 LUFS. Peaky mixes (many sound effects:
+    `motion-graphics`, `overlays`) land at about -15.3 because the limiter takes the peaks and the gain is not raised
+    again. Peaks above -1 dBTP came
+    out now and then (+0.4 … +3.4) and loudness / length changed between identical runs. Causes found: (1) the
+    music track and the sound effects were picked with `Math.random` → now seeded from the job id (a revise uses
+    its parent’s id), so the same plan always gives the same reel; (2) limiting at 4x rate and resampling back made
+    the resampler ring above the ceiling → the limiter runs at 44.1 kHz; (3) `alimiter latency=1` made AAC 1.3 dB
+    hotter on the same audio, and hard limiting (a peaky mix pushed up ~10 dB) overshoots between samples after AAC →
+    `latency` removed, the ceiling fallback above. Lowering the *gain* instead did not work: the limiter output is not
+    monotonic in it (−1.7 dB gain gave a higher true peak).
+- **Measured on fixtures** (ffmpeg, first 120 s): level, band energy and silence share do **not** separate speech
+  from a film mix (arcane ≈ talk-long), so the class relies on Whisper confidence + coverage. Noise floors:
+  talk-long -49, talk-short -45, game -46, arcane -47 dB.
+
+**Not verified (needs a real run the user approves):**
+- The new trust thresholds against fresh real Whisper output (only Arcane run 2's saved, already-filtered lines were
+  replayed; the saved data has no logprob / compression fields).
+- Whether dropping the Whisper prompt hurts Persian accuracy (e.g. "دانلود"). Test on `talk-long.mp4`: same
+  subtitles as before is the P0-2 "done when" and is still open.
+- The 20 % coverage threshold on a vlog with speech over music (will be classed `music_or_mixed` and muted if the
+  person talks less than a fifth of the time).
+- How the new loudness pass sounds by ear (all checks are numeric).
+
+**Next:** P1-1 (done below), then P1-2 … as in section 5.
+
+### 2026-11-15 — P1-1 token budget (offline only, 0 tokens)
+- **Measured before changing:** `npm run token-budget` builds the exact planner request from saved inputs (real
+  analysis, known transcripts, `AI_DRYRUN`, nothing sent) and splits it. Estimates (no offline tokenizer: images
+  w×h/750, Persian ~1.6 chars/token, Latin ~3.8):
+
+  | Reel type | Rules | Style | Input text | Transcript | Images (count) | Prompt |
+  |---|---|---|---|---|---|---|
+  | Talking head, 48 s | 1,589 | 80 | 47 | 302 | 555 (5) | 2,573 |
+  | Screen recording, 39 s | 1,589 | 80 | 70 | 0 | 455 (5) | 2,194 |
+  | Photos only (2) | 1,589 | 80 | 58 | 0 | 222 (2) | 1,949 |
+  | Mixed: talk + game + photo | 1,589 | 80 | 105 | 50 | 788 (8) | 2,612 |
+  | B-roll, 5 stock clips | 1,589 | 80 | 148 | 0 | 1,221 (11) | 3,038 |
+  | Film 290 s (contact sheet) | 1,589 | 80 | 307 | 0 | 1,573 (1) | 3,549 |
+
+  Rules were 1,733 before the trim. Biggest rule parts: general editing 470, marks 244, on-screen text 231,
+  recipes 207, narration/subs 207, JSON format 112. The reply is ~500–700 tokens (Arcane run 2 plan ≈ 516).
+  **The rulebook is 45–80 % of every prompt**; images are the only other big part.
+- Saved real totals in `data/db.json` (2,000–4,500 per reel incl. reply) agree with these estimates. Arcane run 2's
+  14,687 does not: most likely the old blind retry (paid twice) plus reasoning tokens — the new log will show it.
+- **Cut-off replies:** `max_tokens` is only a ceiling, so plan/revise now use 6,000 (was 1,800/3,500/2,200). If a
+  reply is still cut (`finish=length`), `repairJson` closes it at the last complete array item / top-level key
+  (never keeps a half-written clip) → **1.0x cost**. Only if that fails is it re-sent once, with a 1.5x limit.
+  Tested in `npm run test:ai` (incl. the real Arcane plan cut at every 10th character).
+- **Every real request is logged** to `data/usage-log.jsonl`: label (plan / revise / profile / post), finish,
+  prompt, reply, reasoning and **cached** tokens, cost. This answers the caching question on the first real run.
+- **Rulebook trim:** transitions and text animations are filled by code from the recipe (and continuous takes get a
+  cut), so those rules and the JSON fields left the prompt (−144 tokens). One line keeps the optional
+  `highlight` / `shake` hint. Deeper cuts are P1-5's job (the model choosing, not composing).
+
+**Not verified:** real token counts (all estimates), whether GapGPT reports cached tokens, whether the model's
+transition choices were better than the recipe's rotation (visible only in real runs).
+**Next real run (when the user approves):** one reel from saved inputs, then fill a "real" column in the table
+from `data/usage-log.jsonl` and decide on caching.
+
+### 2026-11-15 — P1-2 length enforced in code (offline only, 0 tokens)
+- **Upload screen:** "طول ریل" chooser (خودکار / ۱۵ / ۳۰ / ۶۰ ثانیه) → `job.length` (server accepts only 15/30/60;
+  a revise keeps its parent's). "Auto" falls back to a length written in the brief (`targetSeconds`), else none.
+  Checked in the demo app: the choice reaches the job and is enforced.
+- **`src/length.js` `fitLength`** (pure, deterministic), called in `reel.js` step 4b after sanitising the plan:
+  - Outside ±10 % of the aim → too long: shorten the longest clip from its end; a cut inside a sentence moves back
+    to that sentence's start (it goes out whole); when nothing can shrink, drop the last clip. Too short: grow the
+    shortest clip into unused footage after it (then before it, never before the first clip: that's the hook),
+    photos up to the recipe's max still; never re-uses footage another clip shows; stops when nothing is left.
+  - Aim = target − outro card + transition overlap (0.3 s per join, 0.1 in minimal recipes); after a first fit the
+    seconds jump cuts will remove are measured and it fits once more with them added back.
+  - A revise whose note talks about length ("کوتاه‌تر", "۳۰ ثانیه", …) is not overridden.
+- **Tests:** `npm run test:length` (11 unit cases) and 3 render cases that measure the final file:
+  `length-trim-30` (44 s talk → 28.4 s), `length-extend-30` (11 s plan → 30.0 s), `length-arcane-60`
+  (the real model's 55 s Arcane plan → 58.2 s).
+
+**Known limits / not verified:**
+- Long sentences make the trim coarse: with 8–9 s lines a 25 s aim can end at 21 s (outside ±10 %) rather than
+  cut a sentence. By design; revisit if real talks miss often.
+- Little material stays short (one photo → 9 s even when 30 s is chosen). The UI does not warn about it yet.
+- Jump-cut and overlap corrections are estimates; final length is checked only by the 3 render cases.
+

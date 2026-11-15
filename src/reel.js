@@ -5,7 +5,9 @@ import path from "node:path";
 import { probe, frameAt, extractAudio, detectSilences, sceneChanges, contactSheet, detectBars, sfxLibrary, ensureRisers, colorStats, autoCorrect, matchFilter, LOOKS, TRANSITIONS, TEXT_ANIMS, PHOTO_BOX, SAFE, STICKER_DIR, listStickers, leakFile, transitionLength, buildAss, renderReel, renderCover, jobDir, W, H } from "./media.js";
 import { pickRecipe, recipeTransitions, recipeAnim } from "./recipes.js";
 import { transcribe, planReel } from "./ai.js";
-import { listMoods, pickTrack } from "./music.js";
+import { trustedLine, classifyAudio, coveredSeconds, measureAudio, NOISY_FLOOR_DB } from "./audio.js";
+import { fitLength } from "./length.js";
+import { listMoods, pickTrack, seeded } from "./music.js";
 import { faceTrack } from "./vision.js";
 
 /** k frame times for a video: one in the middle of each shot (longest shots first), extra frames to the longest shots. */
@@ -202,28 +204,28 @@ export async function runReel(job, profileText, setStage, manual = null) {
   fs.copyFileSync(path.join(dir, `f${inputs[0].n}-0.jpg`), path.join(dir, "thumb.jpg"));
   job.thumb = url("thumb.jpg");
 
-  // 2) speech → text (only videos with audio, max 5 min total)
+  // 2) speech → text (only videos with audio, max 5 min total), then ONE audio class per video (src/audio.js):
+  //    speech → voice cleanup + ducking · music_or_mixed → muted under our music · silent → nothing
   const transcript = [];
   let spokenLang = "";
   let budget = 300;
-  // context for speech-to-text: topic + niche + words creators often say
-  const niche = (profileText.match(/^Niche: (.*)$/m) || [])[1] || "";
-  const hint = [job.brief, niche, "دانلود، اپلیکیشن، بازی، لینک تو بیو، کامنت، پیج، فالو، لایک، سیو"].filter(Boolean).join(". ");
+  const analysed = {}, langOf = {};
   // manual mode (manual = {plan, transcript}): an edit plan written by hand, no AI / speech-to-text calls at all
   if (manual) {
     for (const s of manual.transcript || []) transcript.push({ words: [], ...s });
-    for (const v of videos) v.hasSpeech = transcript.some((s) => s.n === v.n);
     spokenLang = manual.spokenLang || (transcript.length ? "persian" : "");
+    for (const v of videos) analysed[v.n] = Math.min(v.duration, 300);
   }
   for (const v of manual ? [] : videos.filter((v) => v.hasAudio)) {
     if (budget <= 0) break;
+    analysed[v.n] = Math.min(v.duration, budget);
     try {
       const audio = await extractAudio(path.join(dir, v.file), path.join(dir, `a${v.n}.mp3`), budget);
-      const r = await transcribe(audio, hint);
+      const r = await transcribe(audio);
       usage.cost += r.cost;
+      langOf[v.n] = r.language;
+      if (r.duration) analysed[v.n] = r.duration;
       r.segments.forEach((s) => transcript.push({ n: v.n, ...s }));
-      v.hasSpeech = r.segments.length > 0;
-      if (v.hasSpeech && !spokenLang) spokenLang = r.language;
     } catch (e) {
       console.warn("transcribe failed:", e.message);
     }
@@ -231,39 +233,47 @@ export async function runReel(job, profileText, setStage, manual = null) {
   }
 
   // clean up the speech-to-text result (local, free):
-  // a) Whisper sometimes "hears" the hint words themselves on music / silence → drop lines made only of hint words
-  if (!manual) {
-    const strip = (w) => w.replace(/[.,!?؟،…:;"'«»]/g, "");
-    const hintWords = new Set(hint.split(/\s+/).map(strip).filter(Boolean));
-    for (let i = transcript.length - 1; i >= 0; i--) {
-      const ws = transcript[i].text.split(/\s+/).map(strip).filter(Boolean);
-      if (!ws.length || ws.every((w) => hintWords.has(w))) transcript.splice(i, 1);
-    }
-    // garbage: on music / fight noise Whisper loops one phrase ("x y x y x y…"). Such lines are dropped, and when
-    // half the lines or more are like that, the whole transcript is unreliable → treated as "no speech"
-    const looped = (s) => {
-      const ws = s.text.split(/\s+/).map(strip).filter(Boolean);
-      return ws.length >= 8 && new Set(ws).size / ws.length < 0.34;
-    };
-    const bad = transcript.filter(looped).length;
-    if (bad && bad >= transcript.length / 2) transcript.length = 0;
-    else for (let i = transcript.length - 1; i >= 0; i--) if (looped(transcript[i])) transcript.splice(i, 1);
-    for (const v of videos) v.hasSpeech = transcript.some((s) => s.n === v.n);
-    if (!transcript.length) spokenLang = "";
+  // a) untrusted lines (low confidence, invented 0-second words, wrong script for the language) are dropped
+  for (let i = transcript.length - 1; i >= 0; i--) if (!trustedLine(transcript[i], langOf[transcript[i].n])) transcript.splice(i, 1);
+  // b) on music / fight noise Whisper loops one phrase ("x y x y x y…"). Such lines are dropped, and when half the
+  //    lines or more are like that, the whole transcript is unreliable → treated as "no speech"
+  const strip = (w) => w.replace(/[.,!?؟،…:;"'«»]/g, "");
+  const looped = (s) => {
+    const ws = s.text.split(/\s+/).map(strip).filter(Boolean);
+    return ws.length >= 8 && new Set(ws).size / ws.length < 0.34;
+  };
+  const bad = transcript.filter(looped).length;
+  if (bad && bad >= transcript.length / 2) transcript.length = 0;
+  else for (let i = transcript.length - 1; i >= 0; i--) if (looped(transcript[i])) transcript.splice(i, 1);
+  // c) the class: enough trusted speech (share of the analysed audio) → speech; otherwise its lines are dropped too
+  for (const v of videos) {
+    v.level = v.hasAudio ? await measureAudio(path.join(dir, v.file)) : {};
+    const lines = transcript.filter((s) => s.n === v.n);
+    v.audioClass = classifyAudio({ lines, analysedSec: analysed[v.n] || 0, level: v.level, hasAudio: v.hasAudio });
+    v.hasSpeech = v.audioClass === "speech";
+    // noise reduction only on a measurably noisy recording (a clean mic gets no FFT denoise artefacts)
+    v.denoise = v.hasSpeech && v.level.floor > NOISY_FLOOR_DB;
+    if (!v.hasSpeech) for (let i = transcript.length - 1; i >= 0; i--) if (transcript[i].n === v.n) transcript.splice(i, 1);
+    console.log(`audio ${v.n}: ${v.audioClass} (${lines.length} lines, ${coveredSeconds(lines).toFixed(1)}/${(analysed[v.n] || 0).toFixed(0)} s speech, rms ${v.level.rms?.toFixed?.(1)} dB, floor ${v.level.floor?.toFixed?.(1)} dB${v.denoise ? ", denoise" : ""})`);
   }
-  // b) line times that sit in measured silence are moved onto the real sound (Whisper's timing can be off by a second)
+  if (!manual) spokenLang = langOf[videos.find((v) => v.hasSpeech)?.n] || "";
+  if (!transcript.length) spokenLang = "";
+  // d) line times that sit in measured silence are moved onto the real sound (Whisper's timing can be off by a second)
   const silencesOf = {};
   for (const v of videos.filter((v) => v.hasSpeech)) {
     silencesOf[v.n] = await detectSilences(path.join(dir, v.file)).catch(() => []);
     retime(transcript.filter((s) => s.n === v.n), silencesOf[v.n], v.duration);
   }
 
-  // 3) one AI call: post text + edit plan (manual = a ready plan: hand-written in tests, or the revised plan of a "revise")
+  // 3) one AI call: post text + edit plan (manual.plan = a ready plan: hand-written in tests, or the revised plan of a "revise";
+  //    manual without a plan = known transcript, real planner request: used by the token budget dry run)
   setStage("writing");
   const moods = listMoods();
-  const { data: plan, usage: u } = manual
+  // reel length: the upload screen choice (15 / 30 / 60 s), else a length written in the brief, else the model decides
+  const askedLength = job.length || targetSeconds(job.brief);
+  const { data: plan, usage: u } = manual?.plan
     ? { data: manual.plan, usage: { tokens: 0, cost: 0 } }
-    : await planReel(profileText, inputs, transcript, job.brief, spokenLang, moods, targetSeconds(job.brief));
+    : await planReel(profileText, inputs, transcript, job.brief, spokenLang, moods, askedLength);
   usage.tokens += u.tokens;
   usage.cost += u.cost;
   // subtitles: the AI's corrected (or translated) lines, with the original timings; raw speech-to-text as fallback
@@ -298,6 +308,22 @@ export async function runReel(job, profileText, setStage, manual = null) {
     })
     .filter(Boolean);
   if (!clips.length) clips = [{ inp: inputs[0], start: 0, dur: Math.min(20, inputs[0].duration) }];
+
+  // 4b) length (P1-2): the chosen length (upload screen) or the one in the brief is enforced here, not left to the model.
+  //     The aim leaves room for the outro card and adds back what transitions overlap and jump cuts remove.
+  //     A revise that asks for another length ("shorter", "30 s") is left as the model planned it.
+  const lengthTarget = /کوتاه|بلند|ثانیه|دقیقه|طول|short|long|sec|min/i.test(job.revise?.note || "") ? null : askedLength;
+  if (lengthTarget) {
+    const lines = Object.fromEntries(videos.filter((v) => v.hasSpeech).map((v) => [v.n, transcript.filter((s) => s.n === v.n)]));
+    const overlap = (n) => Math.max(0, n - 1) * (recipe.minimal ? 0.1 : 0.3);
+    const aim = lengthTarget - (brand.outro ? 1.6 : 0);
+    const removedByJumpCuts = (cs) => cs.reduce((a, c) => a + (c.inp.type === "video" && silencesOf[c.inp.n] ? c.dur - jumpCut(c, silencesOf[c.inp.n], transcript.filter((s) => s.n === c.inp.n).flatMap((s) => s.words || [])).reduce((x, p) => x + p.dur, 0) : 0), 0);
+    let fit = fitLength(clips, aim + overlap(clips.length), { lines, maxStill });
+    const removed = removedByJumpCuts(fit.clips);
+    if (removed > 0.3) fit = fitLength(fit.clips, aim + overlap(fit.clips.length) + removed, { lines, maxStill });
+    if (fit.log.length) console.log(`length: target ${lengthTarget} s, planned ${clips.reduce((a, c) => a + c.dur, 0).toFixed(1)} s →`, fit.log.length > 6 ? `${fit.log.slice(0, 6).join(", ")} … (${fit.log.length} moves)` : fit.log.join(", "));
+    clips = fit.clips;
+  }
   let planned = 0;
   clips = clips.filter((c) => (planned + c.dur <= 90 ? ((c.offset = planned), (planned += c.dur), true) : false));
   clips.forEach((c, i) => (c.id = i));
@@ -337,7 +363,7 @@ export async function runReel(job, profileText, setStage, manual = null) {
 
   // 6) music: the AI's mood (or the recipe's when it didn't say; "none" = no music); cuts between shots snap to the beat
   const mood = plan.music === "none" ? null : moods.includes(plan.music) ? plan.music : moods.includes(recipe.music) ? recipe.music : null;
-  const track = mood ? await pickTrack(mood).catch((e) => (console.warn("music:", e.message), null)) : null;
+  const track = mood ? await pickTrack(mood, job.revise?.parentId || job.id).catch((e) => (console.warn("music:", e.message), null)) : null;
   const startAt = track?.beats?.[0] || 0;
   const beats = (track?.beats || []).map((b) => b - startAt).filter((b) => b > 0.3);
   if (beats.length) {
@@ -576,7 +602,7 @@ export async function runReel(job, profileText, setStage, manual = null) {
   // whoosh on moving transitions, impact on key sentences + big centre texts, pop when a headline / sticker appears,
   // and before each big reveal: a riser that builds up + the music drops out for a moment (silence makes the hit land)
   await ensureRisers().catch(() => {});
-  const lib = sfxLibrary();
+  const lib = sfxLibrary(seeded(job.revise?.parentId || job.id));
   const sfx = [];
   const add = (kind, at, volume) => lib[kind] && !sfx.some((s) => Math.abs(s.at - at) < 0.3) && sfx.push({ file: lib[kind](), at: Math.max(0, at), volume });
   const reveals = recipe.risers
@@ -613,12 +639,12 @@ export async function runReel(job, profileText, setStage, manual = null) {
         const z = p.emph ? 1.2 : p.alt ? 1.1 : 0;
         return {
           file: p.inp.file, start: p.start, dur: p.dur, isImage: p.inp.type === "image", hasAudio: p.inp.hasAudio,
-          voice: p.inp.type === "video" && p.inp.hasSpeech, shot: p.id, look, brighten: brighten.has(p.inp.n) && !auto[p.inp.n],
+          voice: p.inp.type === "video" && p.inp.hasSpeech, denoise: !!p.inp.denoise, shot: p.id, look, brighten: brighten.has(p.inp.n) && !auto[p.inp.n],
           auto: auto[p.inp.n], framed: framed.has(p.inp.n),
           crop: cropMode(p.inp) ? cropKeys(p.inp, p.start, p.dur, p.fx, p.speed) : null, wide: wideMode(p.inp) ? cropKeys(p.inp, p.start, p.dur, p.fx, p.speed) : null,
           speed: p.speed || 1, bars: barsOf,
-          // a clip's own sound (street, crowd, a dog) sits quietly under the music instead of fighting it
-          bg: !!track && !(p.inp.type === "video" && p.inp.hasSpeech),
+          // footage with its own soundtrack (film, music, street) is replaced by our music, never both at full level
+          mute: !!track && p.inp.audioClass === "music_or_mixed",
           punch: z && !framed.has(p.inp.n) ? { z, ...faceInFrame(p.inp, p.start + (p.dur * (p.speed || 1)) / 2) } : null,
         };
       }),
@@ -644,6 +670,7 @@ export async function runReel(job, profileText, setStage, manual = null) {
       music: track ? { mood, bpm: track.bpm, track: path.basename(track.file) } : null,
       look, transitions: joins.filter(Boolean).map((j) => j.name), emphasis: emphasis.length,
       smartCrop: Object.keys(tracks).some((n) => cropMode(byN[n])), colorFixed: Object.values(auto).filter(Boolean).length,
+      audio: Object.fromEntries(videos.map((v) => [v.n, v.audioClass + (v.denoise ? "+denoise" : "")])),
       narration: transcript.length
         ? { language: spokenLang, text: subSource.map((s) => s.text).join(" "), original: transcript.map((s) => s.text).join(" ") }
         : null,

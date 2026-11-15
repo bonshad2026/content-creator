@@ -9,6 +9,10 @@
     "dev": "node --watch --env-file-if-exists=.env server.js",
     "models": "node --env-file-if-exists=.env scripts/models.js",
     "test:reel": "node scripts/test-reel.mjs",
+    "test:audio": "node scripts/test-audio.mjs",
+    "test:ai": "node scripts/test-ai.mjs",
+    "test:length": "node scripts/test-length.mjs",
+    "token-budget": "node scripts/token-budget.mjs",
     "stickers": "node scripts/get-stickers.mjs",
     "music": "node scripts/get-music.mjs",
     "demo": "node scripts/demo-server.mjs"

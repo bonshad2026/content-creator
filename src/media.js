@@ -192,14 +192,14 @@ export async function beatGrid(file, maxSec = 120) {
 // Empty folder = that kind of sound is simply not used (better silence than a cheap sound).
 export const SFX_DIR = path.resolve("assets/sfx");
 export const SFX_KINDS = ["whoosh", "pop", "impact", "riser"];
-export function sfxLibrary() {
+export function sfxLibrary(seed = 0) {
   const lib = {};
   for (const kind of SFX_KINDS) {
     let files = [];
     try {
       files = fs.readdirSync(path.join(SFX_DIR, kind)).filter((f) => /\.(wav|mp3|ogg|m4a|flac)$/i.test(f)).map((f) => path.join(SFX_DIR, kind, f));
     } catch {}
-    let i = Math.floor(Math.random() * 1000);
+    let i = seed;
     // rotate through the files so the same sound doesn't repeat back to back
     lib[kind] = files.length ? () => files[i++ % files.length] : null;
   }
@@ -570,10 +570,10 @@ function layout(i, c) {
 }
 
 /**
- * clips: [{file, start, dur, isImage, hasAudio, voice, shot, look, brighten, crop, punch}] → out.mp4 with ass burned in.
+ * clips: [{file, start, dur, isImage, hasAudio, voice, denoise, mute, shot, look, brighten, crop, punch}] → out.mp4 with ass burned in.
  * Pieces of the same shot are joined with hard cuts (jump cuts); between shots `joins[k]` = {type (xfade name), d} or null (cut).
  * opts.music: {file, startAt, volume, duck} · opts.sfx: [{file, at, volume}] · opts.total: final length (s)
- * Audio: speech is denoised, music ducks under the voice, sound effects on top, whole mix normalised to -14 LUFS (Instagram level).
+ * Audio: speech is cleaned (denoised only when noisy), its own soundtrack is muted under our music, music ducks under the voice, sound effects on top, whole mix normalised to -14 LUFS (Instagram level).
  * cwd = the job folder (keeps every path in the filter relative, which avoids Windows "C:" escaping issues).
  */
 export async function renderReel(cwd, clips, assFile, outFile, opts = {}) {
@@ -598,13 +598,14 @@ export async function renderReel(cwd, clips, assFile, outFile, opts = {}) {
   const stickerIdx = stickers.map((s) => input("-loop", "1", "-framerate", "30", "-t", (s.end + 0.5).toFixed(2), "-i", s.file));
 
   const g = clips.map((c, i) => {
-    // speech: cut rumble below 80 Hz + gentle FFT noise reduction (fan, street hiss)
+    // speech only: cut rumble below 80 Hz (+ gentle FFT noise reduction when the recording is measurably noisy)
     // + "radio voice": de-esser, gentle compression (even loudness), less mud at 180 Hz, more presence at 3.2 kHz
-    const bg = c.bg ? "volume=0.3," : "";
-    const clean = c.voice
-      ? "highpass=f=80,afftdn=nf=-25,deesser=i=0.4,acompressor=threshold=0.1:ratio=3:attack=10:release=200:makeup=2,equalizer=f=180:t=q:w=1:g=-2,equalizer=f=3200:t=q:w=1.4:g=3,"
+    // anything else (film mix, music, ambience) passes untouched, or is muted when our music replaces it
+    const mute = c.mute ? "volume=0," : "";
+    const clean = c.voice && !c.mute
+      ? `highpass=f=80,${c.denoise ? "afftdn=nf=-25," : ""}deesser=i=0.4,acompressor=threshold=0.1:ratio=3:attack=10:release=200:makeup=2,equalizer=f=180:t=q:w=1:g=-2,equalizer=f=3200:t=q:w=1.4:g=3,`
       : "";
-    return layout(i, c) + `;[${silentIdx[i] ?? i}:a]${clean}${bg}aresample=44100,aformat=channel_layouts=stereo,apad,atrim=0:${c.dur.toFixed(3)},asetpts=PTS-STARTPTS[a${i}]`;
+    return layout(i, c) + `;[${silentIdx[i] ?? i}:a]${clean}${mute}aresample=44100,aformat=channel_layouts=stereo,apad,atrim=0:${c.dur.toFixed(3)},asetpts=PTS-STARTPTS[a${i}]`;
   });
 
   // shots: consecutive pieces of the same shot → hard cuts
@@ -676,11 +677,46 @@ export async function renderReel(cwd, clips, assFile, outFile, opts = {}) {
     mix.push(`[fx${k}]`);
   });
   const mixed = mix.length > 1 ? `${mix.join("")}amix=inputs=${mix.length}:duration=first:normalize=0,` : `${mix[0]}anull,`;
-  g.push(`${mixed}atrim=0:${T},loudnorm=I=-14:TP=-1.5:LRA=11,aresample=44100[outa]`);
+  g.push(`${mixed}atrim=0:${T},aresample=44100[outa]`);
 
+  // the graph is kept next to the output: tests assert on it, and it explains any odd render later
+  fs.writeFileSync(path.join(cwd, "render-filter.txt"), g.join(";\n"));
+  // pass 1: picture + lossless audio; pass 2: one fixed gain to -14 LUFS + a true-peak limiter (video copied).
+  // A fixed gain keeps the mix's own dynamics: single-pass loudnorm rides the level and pumps on music.
+  const pre = `pre-${path.parse(outFile).name}.mkv`;
   await ffmpeg([...args, "-filter_complex", g.join(";"), "-map", "[outv]", "-map", "[outa]",
-    "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", outFile], cwd);
+    "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-c:a", "pcm_s16le", pre], cwd);
+  const { i } = await loudnessOf(path.join(cwd, pre));
+  const gain = Number.isFinite(i) && i > -60 ? Math.max(-20, Math.min(20, LUFS - i)) : 0;
+  // The limiter runs at the mix's own rate (limiting at 4x and resampling back made the resampler ring up to +3 dB
+  // over the ceiling) and without `latency=1` (with it, AAC came out 1.3 dB hotter on the same audio).
+  const pass2 = (ceil) => ffmpeg(["-i", pre, "-map", "0:v", "-map", "0:a", "-c:v", "copy",
+    "-af", `volume=${gain.toFixed(2)}dB,alimiter=limit=${Math.pow(10, ceil / 20).toFixed(3)}:level=false`,
+    "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", outFile], cwd);
+  // checked, not trusted: hard limiting (a peaky mix pushed up 10 dB) makes AAC overshoot the sample ceiling between
+  // samples. If the true peak is above -1 dBTP, the ceiling goes down by the overshoot (max 2 retries).
+  let ceil = PEAK_DB;
+  await pass2(ceil);
+  for (let k = 0; k < 2; k++) {
+    const { tp } = await loudnessOf(path.join(cwd, outFile));
+    if (!(tp > -1)) break;
+    ceil -= tp + 1 + 0.3;
+    console.warn(`true peak ${tp} dBTP (gain ${gain.toFixed(1)} dB) → limiter ceiling ${ceil.toFixed(1)} dB`);
+    await pass2(ceil);
+  }
+  if (process.env.KEEP_PRE) fs.copyFileSync(path.join(cwd, pre), path.resolve(process.env.KEEP_PRE));
+  fs.rmSync(path.join(cwd, pre), { force: true });
   if (!fs.existsSync(path.join(cwd, outFile))) throw new Error("ffmpeg: video was not created");
+}
+
+// Instagram / Shorts level, and the limiter ceiling (sample peak; between-sample peaks + AAC add ~1 dB → ≤ -1 dBTP)
+export const LUFS = -14, PEAK_DB = -2.5;
+
+/** Integrated loudness (LUFS), loudness range (LU) and true peak (dBTP) of a file's audio (EBU R128). */
+export async function loudnessOf(file) {
+  const log = await ffmpegScan(["-i", file, "-vn", "-af", "ebur128=peak=true:framelog=quiet", "-f", "null", "-"], /\b(I|LRA|Peak):\s/);
+  const last = (re) => +(([...log.matchAll(re)].pop() || [])[1] ?? NaN);
+  return { i: last(/\bI:\s+(-?[\d.]+) LUFS/g), lra: last(/\bLRA:\s+(-?[\d.]+) LU/g), tp: last(/\bPeak:\s+(-?[\d.]+) dBFS/g) };
 }
 
 /** Cover image: one frame in the same 9:16 layout + look, with the cover text on it. c = {file, start, isImage, look, brighten, crop} */
