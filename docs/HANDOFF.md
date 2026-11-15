@@ -38,7 +38,7 @@ upload → probe / scene detection / frames (or contact sheet if >60 s)
 | `scripts/test-reel.mjs` | 428 | Offline tests: hand-written plans, 0 tokens. |
 
 Commands: `npm start` (app), `npm run demo` (port 3010, demo AI, separate data), `npm run test:reel` (22 offline render
-cases), `npm run test:audio`, `test:ai`, `test:length` (unit tests, seconds), `npm run token-budget` (planner request size, 0 tokens).
+cases), `npm run test:audio`, `test:ai`, `test:length`, `test:plan` (unit tests, seconds), `npm run token-budget` (planner request size, 0 tokens).
 Samples and the earlier report: `demo-output/expert/`.
 
 ## 3. What is verified and what is not
@@ -323,3 +323,21 @@ from `data/usage-log.jsonl` and decide on caching.
 - Little material stays short (one photo → 9 s even when 30 s is chosen). The UI does not warn about it yet.
 - Jump-cut and overlap corrections are estimates; final length is checked only by the 3 render cases.
 
+### 2026-11-15 — P1-3 plan schema (offline only, 0 tokens)
+- **`src/plan.js` `normalizePlan(raw, ctx)`**: one zod schema per field (clips, texts, marks as a discriminated union
+  by type, and every top-level field the code reads). It runs once at the top of `runReel` step 4, so the model's
+  plan, a revised plan, hand-written test plans and the demo mock all pass the same gate.
+  - Each field and each list item is parsed alone: a bad item is dropped, the rest is kept. Clear slips are repaired:
+    numbers written as text, clip in/out swapped, a clip past the end of its video clamped, `"true"` → true, `#`
+    added to hashtags, an unknown text position → top.
+  - Against the job (`ctx`): input numbers must exist (clips, marks, framed, coverFrom); recipe, look, music mood
+    and sticker names must be real; unknown transitions / animations become "" (the recipe's choice).
+  - Every repair / drop is logged with its reason (`plan: N repaired / dropped: …`) and returned as
+    `output.planIssues`.
+- **Tests:** `npm run test:plan` (sloppy plan: 15 checks; both saved real Arcane plans pass with zero issues and all
+  clips kept). `test-reel` now fails a case whose hand-written plan needs any repair (a broken test plan must not be
+  hidden by the schema). That check found `brighten` (still read by the pipeline) missing from the schema → added.
+
+**Not verified:** a real cheap-model plan through the schema (none exists yet; P1-5 will produce some).
+The per-field checks still left inside `runReel` (e.g. `Array.isArray(plan.marks)`) are now redundant; removing them
+belongs with the `runReel` split (P2-1).

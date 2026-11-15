@@ -12,6 +12,7 @@
     "test:audio": "node scripts/test-audio.mjs",
     "test:ai": "node scripts/test-ai.mjs",
     "test:length": "node scripts/test-length.mjs",
+    "test:plan": "node scripts/test-plan.mjs",
     "token-budget": "node scripts/token-budget.mjs",
     "stickers": "node scripts/get-stickers.mjs",
     "music": "node scripts/get-music.mjs",

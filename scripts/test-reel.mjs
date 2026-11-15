@@ -471,7 +471,9 @@ for (const [name, c] of Object.entries(CASES)) {
     await sheet(out, path.join(OUT, `${name}-sheet.jpg`));
     const real = (await probe(out)).duration, lufs = await loudness(out), o = r.output;
     const durOk = Math.abs(real - o.duration) <= 1.0, loudOk = (!o.music && !o.narration) || (lufs >= -16 && lufs <= -13); // no voice and no music → only a few sound effects, loudness is not meaningful. Peaky mixes (many sound effects) land up to 2 dB under -14: the limiter takes the peaks, the gain is not raised again
-    const audioFail = [await audioChecks(c, o, dir, out), c.length && Math.abs(real - c.length) > c.length * 0.1 && `length ${real.toFixed(1)} s, asked ${c.length}`].filter(Boolean).join("; ");
+    const audioFail = [await audioChecks(c, o, dir, out), c.length && Math.abs(real - c.length) > c.length * 0.1 && `length ${real.toFixed(1)} s, asked ${c.length}`,
+      // hand-written plans must be valid as written (the schema would hide a broken test plan by repairing it)
+      !c.planIssuesOk && o.planIssues?.length && `plan: ${o.planIssues.join(" | ")}`].filter(Boolean).join("; ");
     results.push({
       case: name, ok: durOk && loudOk && !audioFail && r.usage.tokens === 0, sec: ((Date.now() - t0) / 1000).toFixed(0),
       dur: real.toFixed(1), lufs: lufs.toFixed(1), tokens: r.usage.tokens,

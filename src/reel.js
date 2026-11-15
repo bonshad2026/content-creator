@@ -3,7 +3,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { probe, frameAt, extractAudio, detectSilences, sceneChanges, contactSheet, detectBars, sfxLibrary, ensureRisers, colorStats, autoCorrect, matchFilter, LOOKS, TRANSITIONS, TEXT_ANIMS, PHOTO_BOX, SAFE, STICKER_DIR, listStickers, leakFile, transitionLength, buildAss, renderReel, renderCover, jobDir, W, H } from "./media.js";
-import { pickRecipe, recipeTransitions, recipeAnim } from "./recipes.js";
+import { pickRecipe, recipeTransitions, recipeAnim, RECIPE_NAMES } from "./recipes.js";
+import { normalizePlan } from "./plan.js";
 import { transcribe, planReel } from "./ai.js";
 import { trustedLine, classifyAudio, coveredSeconds, measureAudio, NOISY_FLOOR_DB } from "./audio.js";
 import { fitLength } from "./length.js";
@@ -271,11 +272,16 @@ export async function runReel(job, profileText, setStage, manual = null) {
   const moods = listMoods();
   // reel length: the upload screen choice (15 / 30 / 60 s), else a length written in the brief, else the model decides
   const askedLength = job.length || targetSeconds(job.brief);
-  const { data: plan, usage: u } = manual?.plan
+  const { data: rawPlan, usage: u } = manual?.plan
     ? { data: manual.plan, usage: { tokens: 0, cost: 0 } }
     : await planReel(profileText, inputs, transcript, job.brief, spokenLang, moods, askedLength);
   usage.tokens += u.tokens;
   usage.cost += u.cost;
+  // every plan (model, revise, hand-written, demo) goes through the one schema: repaired, never trusted (src/plan.js)
+  const { plan, issues: planIssues } = normalizePlan(rawPlan, {
+    inputs, recipes: RECIPE_NAMES, looks: Object.keys(LOOKS), moods, stickers: listStickers(), anims: TEXT_ANIMS, transitions: Object.keys(TRANSITIONS),
+  });
+  if (planIssues.length) console.warn(`plan: ${planIssues.length} repaired / dropped:\n  ${planIssues.join("\n  ")}`);
   // subtitles: the AI's corrected (or translated) lines, with the original timings; raw speech-to-text as fallback
   const fixed = Array.isArray(plan.subs) && transcript.length > 0 && plan.subs.length === transcript.length && plan.subs.every((x) => typeof x === "string" && x.trim());
   if (transcript.length && !fixed) console.warn(`subs not usable (${plan.subs?.length} for ${transcript.length} lines), using raw transcript`);
@@ -671,6 +677,7 @@ export async function runReel(job, profileText, setStage, manual = null) {
       look, transitions: joins.filter(Boolean).map((j) => j.name), emphasis: emphasis.length,
       smartCrop: Object.keys(tracks).some((n) => cropMode(byN[n])), colorFixed: Object.values(auto).filter(Boolean).length,
       audio: Object.fromEntries(videos.map((v) => [v.n, v.audioClass + (v.denoise ? "+denoise" : "")])),
+      planIssues,
       narration: transcript.length
         ? { language: spokenLang, text: subSource.map((s) => s.text).join(" "), original: transcript.map((s) => s.text).join(" ") }
         : null,
