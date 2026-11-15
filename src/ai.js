@@ -271,15 +271,20 @@ function momentRules(moods) {
   return (
     "You are ONE creator's video editor and copywriter. From numbered moments of their footage, choose what goes into a vertical short (Reels/Shorts), and write the post in their exact voice.\n\n" +
     `1. recipe: one of [${RECIPE_NAMES.map((r) => `${r} (${RECIPES[r].about})`).join("; ")}].\n` +
-    "2. moments: the moment numbers to use, in the order they should play. Open with the most striking one. Keep the story clear; skip dull or repeated moments. With speech, keep the moments whose words matter, in order.\n" +
+    "2. moments: the moment numbers to use, in the order they should play. Open with the most striking one and end on a strong one (never an empty or dull frame). Keep the story clear; skip dull or repeated moments. With speech, keep the moments whose words matter, in order.\n" +
     "3. texts: 1-4 short on-screen lines (max 5 words, no emoji), each on a picked moment: {\"m\":3,\"text\":\"...\",\"pos\":\"top\"|\"center\"}. The first one, on the first moment, is the hook. Never repeat what is said aloud.\n" +
+    "   Templates (the app builds timers, reveals, numbering and effects; their moments must also be in moments; template texts are extra to texts):\n" +
+    "   quiz recipe: quiz = [{\"q\":question moment,\"ask\":\"question\",\"a\":answer moment,\"answer\":\"short answer\"}]. The q moment must NOT show the answer yet (no highlighted or ticked option); a shows it (a = q only if the answer appears later in that same moment). Leave the last one without a/answer so viewers answer in the comments.\n" +
+    "   list recipe: list = [{\"m\":M,\"text\":\"point\"}], one per point (the app numbers them). before-after recipe: before = {\"m\":M,\"text\":\"...\"}, after = {\"m\":M,\"text\":\"...\"}.\n" +
+    "   ending (optional, any recipe): a big closing line on the last moment, e.g. a question for the comments.\n" +
+    `   marks (optional, max 4, only where they add energy): {"m":M,"type":"sticker","name":one of [${listStickers().join(", ")}]} or {"m":M,"type":"confetti"|"sparkle"|"burst"}.\n` +
     "4. Optional: slow = moment numbers to play in slow motion (a dramatic action, never speech); framed = INPUT numbers (the \"Input 2\" kind, never moment numbers) that are screen recordings / app or game UI; emphasis = up to 3 speech line numbers (#) that are the key sentences.\n" +
     "5. If there is speech: subs = one string per speech line, same order, fixed for mis-heard words (e.g. 'گانلود' → 'دانلود'), in the creator's content language (translate if needed), no emoji. subtitles = true if the words matter.\n" +
     (moods.length ? `6. music: one of [${moods.join(", ")}] or "none".\n` : "") +
     `7. look: one of [${Object.keys(LOOKS).join(", ")}] ("natural" if it already looks good). coverFrom: {"m": the best-looking moment}, cover: max 5 words.\n` +
     "8. The post: caption (WITHOUT hashtags), hashtags, 3 alternative hooks, cta (max 4 words), up to 2 short tips.\n\n" +
     "The app does all timing, cuts, transitions, animation, sound and length. " +
-    'Reply ONLY with JSON: {"recipe":"...","moments":[1,4,7],"texts":[{"m":1,"text":"...","pos":"top"}],"slow":[],"framed":[],"emphasis":[],"subtitles":false,"subs":[],' +
+    'Reply ONLY with JSON: {"recipe":"...","moments":[1,4,7],"texts":[{"m":1,"text":"...","pos":"top"}],"quiz":[],"list":[],"ending":"","marks":[],"slow":[],"framed":[],"emphasis":[],"subtitles":false,"subs":[],' +
     (moods.length ? '"music":"...",' : "") +
     '"look":"natural","coverFrom":{"m":4},"cover":"...","cta":"...","hooks":["..."],"caption":"...","hashtags":["#..."],"tips":[]}'
   );

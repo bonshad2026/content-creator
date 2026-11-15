@@ -429,3 +429,22 @@ Haiku is good enough for talking heads, not yet for quiz or film. **Default stay
 3. Fix the `cover` rubric (relative to reel length) and add rubric checks for what the eye found: ends on an
    empty screen, answer shown before the question, sticker/accent count for quiz/promo.
 4. Then run the comparison again (needs user approval).
+
+### 2026-11-15 — P1-5 step 2: marks + quiz / list / before-after templates in moments mode (offline only, 0 tokens)
+
+Next items 1 and 2 above. The model still only names moments and words; the structure is built in code
+(`expandBeats` in `src/moments.js`, run inside `momentsToPlan`):
+- `quiz: [{q, ask, a, answer}]` → question text on q, countdown bar from q until the reveal, answer text with
+  `highlight` (+ the recipe's riser), ✅ sticker + sparkle. `a = q` → reveal at 55 % of that moment. An item without
+  an answer stays open (timer only) for the comments. Answer before its question → dropped + reported.
+  Prompt says the q moment must NOT show the answer (the Haiku spoiler).
+- `list: [{m, text}]` → "۱. …" numbered points (Persian digits for Persian text). `before` / `after: {m, text}` →
+  labels, the after one with highlight + sparkle + burst.
+- `ending: "..."` → big centre line (shake) in the last ~3 s of the last moment; quiz adds 🤔.
+- `marks: [{m, type:"sticker", name}]` or confetti / sparkle / burst on a moment: spot, size and length from code.
+- Rule 2 now says "end on a strong moment (never an empty or dull frame)" (Opus-moments ended on an empty screen).
+- Prompt grows by ~350 tokens (estimate; the static part, cacheable).
+- Tests: `test:moments` 32 checks (13 new), render case `moments-quiz-template` (timer, ✅, sparkle, 🤔, ❓ present).
+  The saved real plans have no template fields, so how well a model *uses* them is unknown until the next real run.
+
+**Next:** item 3 (rubric fixes), then item 4 (real comparison again, needs user approval).

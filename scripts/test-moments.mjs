@@ -56,6 +56,41 @@ const check = (name, ok, note = "") => results.push({ case: name, ok: ok ? "PASS
   const n = normalizePlan(plan, { inputs: [{ n: 1, type: "video", duration: 30 }, { n: 2, type: "image" }] });
   check("result passes the plan schema untouched", n.issues.length === 0, n.issues.join(" | "));
 }
+// ---- templates: quiz / list / before-after / ending / short marks ----
+{
+  const ms = [1, 2, 3, 4, 5].map((id) => ({ id, n: 1, s: (id - 1) * 4, e: id * 4, kind: "shot" }));
+  const { plan, issues } = momentsToPlan({
+    moments: [1, 2, 3, 4], quiz: [{ q: 1, ask: "کیه؟", a: 2, answer: "زیدان" }, { q: 3, ask: "این؟", a: 3, answer: "مسی" }, { q: 4, ask: "آخری؟" }, { q: 2, ask: "عقب", a: 1, answer: "x" }],
+    ending: "کامنت کن", marks: [{ m: 2, type: "sticker", name: "fire" }],
+  }, ms);
+  const tx = (s) => plan.texts.find((t) => t.text === s);
+  const bars = plan.marks.filter((m) => m.type === "bar");
+  check("quiz: question on its moment, answer revealed on the answer moment", tx("کیه؟").t === 0.2 && tx("زیدان").t === 4.2 && tx("زیدان").anim === "highlight", JSON.stringify(plan.texts));
+  check("quiz: timer runs from the question to the reveal", Math.abs(bars[0].t - 0.6) < 0.01 && Math.abs(bars[0].t + bars[0].d - 4.1) < 0.01, JSON.stringify(bars));
+  check("quiz: a = q reveals in the second half of the moment", tx("مسی").t > 8 + 2 && tx("مسی").t < 12, tx("مسی").t);
+  check("quiz: ✅ + sparkle on each reveal, 🤔 at the end", plan.marks.filter((m) => m.name === "check").length === 2 && plan.marks.some((m) => m.type === "sparkle") && plan.marks.some((m) => m.name === "think"));
+  check("quiz: open question (and a dropped answer) gets a timer, no answer", bars.length === 4 && !plan.texts.some((t) => t.text === "x"), bars.length);
+  check("quiz: answer before its question → dropped + reported", issues.some((i) => i.includes("before its question")), issues.join(" | "));
+  check("ending: centre line in the last seconds of the last moment", tx("کامنت کن").pos === "center" && tx("کامنت کن").t >= 12 && tx("کامنت کن").t + tx("کامنت کن").d <= 16.01, JSON.stringify(tx("کامنت کن")));
+  const st = plan.marks.find((m) => m.name === "fire");
+  check("short sticker gets a spot, size and its moment's length", st.x === 0.78 && st.y === 0.32 && st.s === 0.24 && st.d >= 3, JSON.stringify(st));
+  check("template fields removed from the plan", !("quiz" in plan) && !("ending" in plan));
+  const n = normalizePlan(plan, { inputs: [{ n: 1, type: "video", duration: 30 }] });
+  check("quiz plan passes the schema untouched", n.issues.length === 0, n.issues.join(" | "));
+
+  const l = momentsToPlan({ moments: [2, 1, 5], list: [{ m: 2, text: "اول" }, { m: 1, text: "دوم" }, { m: 4, text: "نیست" }], before: { m: 2, text: "قبل" }, after: { m: 5, text: "بعد" } }, ms);
+  check("list: numbered in order, Persian digits", l.plan.texts[0].text === "۱. اول" && l.plan.texts[1].text === "۲. دوم", JSON.stringify(l.plan.texts.map((t) => t.text)));
+  check("list point on an unpicked moment reported", l.issues.some((i) => i.includes("list point")), l.issues.join(" | "));
+  check("before-after: after revealed with sparkle + burst", l.plan.texts.find((t) => t.text === "بعد").anim === "highlight" && l.plan.marks.some((m) => m.type === "burst"));
+}
+// ---- the real moments plans saved from the comparison still convert cleanly (no template fields: unchanged behaviour) ----
+{
+  const fs = await import("node:fs");
+  for (const f of ["mixed--opus-moments", "mixed--haiku-moments"]) {
+    const saved = JSON.parse(fs.readFileSync(`scripts/fixtures/real-plans/${f}.json`, "utf8"));
+    check(`${f}: still has no quiz structure (needs a new real run)`, !saved.raw.quiz && !(saved.raw.marks || []).length);
+  }
+}
 
 console.table(results);
 process.exit(results.every((r) => r.ok === "PASS") ? 0 : 1);

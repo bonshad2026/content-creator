@@ -150,34 +150,91 @@ export function momentsToPlan(plan, moments) {
   const at = new Map();
   let t = 0;
   picks.forEach((m, i) => (at.set(m.id, t), (t += (m.e - m.s) / (clips[i].speed || 1))));
-  const place = (x, d) => {
+  const momentLen = (id, dflt) => (byId.has(Number(id)) ? byId.get(Number(id)).e - byId.get(Number(id)).s : dflt);
+  // _off: seconds into the moment (a reveal later in the same moment); _d: a length set by a template
+  const place = (x) => {
     const id = Number(x.m);
     if (!id) return { t: 0 };
     if (!at.has(id)) return null;
-    return { t: +(at.get(id) + 0.2).toFixed(2), ...(d ? { d } : {}) };
+    return { t: +(at.get(id) + (x._off ?? 0.2)).toFixed(2) };
   };
+  // templates (quiz / list / before-after): the model names moments + words, the structure is built here
+  const beat = expandBeats(plan, picks, at, issues);
   const texts = [];
-  for (const x of Array.isArray(plan.texts) ? plan.texts : []) {
+  for (const x of [...(Array.isArray(plan.texts) ? plan.texts : []), ...beat.texts]) {
     if (x && "t" in x && !("m" in x)) { texts.push(x); continue; } // already in seconds (old format)
     const p = place(x || {});
     if (!p) { issues.push(`text on M${x.m} (not picked) → dropped`); continue; }
-    const len = x.m && at.has(Number(x.m)) ? byId.get(Number(x.m)).e - byId.get(Number(x.m)).s : 2.5;
-    const { m, ...rest } = x;
-    texts.push({ ...rest, ...p, d: +Math.max(1.5, Math.min(3.5, len - 0.3)).toFixed(2) });
+    const len = x.m && at.has(Number(x.m)) ? momentLen(x.m, 2.5) - (x._off ?? 0) : 2.5;
+    const { m, _off, _d, ...rest } = x;
+    texts.push({ ...rest, ...p, d: +(_d ?? Math.max(1.5, Math.min(3.5, len - 0.3))).toFixed(2) });
   }
   const marks = [];
-  for (const x of Array.isArray(plan.marks) ? plan.marks : []) {
+  for (const x of [...(Array.isArray(plan.marks) ? plan.marks : []), ...beat.marks]) {
     if (x && "t" in x && !("m" in x)) { marks.push(x); continue; }
     const p = place(x || {});
     if (!p) { issues.push(`mark on M${x?.m} (not picked) → dropped`); continue; }
-    const { m, ...rest } = x;
-    marks.push({ ...rest, ...p });
+    const { m, _off, _d, ...rest } = x;
+    const mark = { ...rest, ...p, ...(_d ? { d: +_d.toFixed(2) } : {}) };
+    // a sticker named only: the code picks its spot (upper right, inside the safe zone) and stays for its moment
+    if (mark.type === "sticker") Object.assign(mark, { x: rest.x ?? 0.78, y: rest.y ?? 0.32, s: rest.s ?? 0.24, d: mark.d ?? Math.max(1, momentLen(m, 2) - (_off ?? 0)) });
+    if (mark.type === "sparkle" || mark.type === "burst") Object.assign(mark, { x: rest.x ?? 0.5, y: rest.y ?? 0.45 });
+    marks.push(mark);
   }
   const out = { ...plan, clips, texts, marks };
-  delete out.moments;
-  delete out.slow;
+  for (const k of ["moments", "slow", "quiz", "list", "before", "after", "ending"]) delete out[k];
   const cm = byId.get(Number(plan.coverFrom?.m));
   if (cm) out.coverFrom = { n: cm.n, s: +((cm.s + cm.e) / 2).toFixed(2) };
   else if (plan.coverFrom?.m != null) { issues.push(`cover moment M${plan.coverFrom.m} does not exist → first clip`); delete out.coverFrom; }
   return { plan: out, issues };
+}
+
+const persianDigits = (k, like) => (/[؀-ۿ]/.test(like) ? String(k).replace(/\d/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[d]) : String(k));
+/**
+ * Templates of moments mode. The model gives only moment numbers + words; the structure is fixed here:
+ *  quiz:   [{"q":M,"ask":"...","a":M,"answer":"..."}] → question text, countdown bar until the answer, answer revealed
+ *          (highlight + ✅ + sparkle; a riser before it comes from the recipe). An item without an answer stays open
+ *          for the comments (🤔). a = q is allowed: the reveal then comes in the second half of that moment.
+ *  list:   [{"m":M,"text":"..."}] → numbered points ("۱. …").
+ *  before / after: {"m":M,"text":"..."} → the label, the after one revealed with sparkle + burst.
+ *  ending: "..." → a big centre line on the last picked moment (quiz: with 🤔).
+ */
+export function expandBeats(plan, picks, at, issues) {
+  const texts = [], marks = [];
+  const order = new Map(picks.map((m, i) => [m.id, i]));
+  const picked = (id, what) => (order.has(Number(id)) ? Number(id) : (issues.push(`${what} on M${id} (not picked) → dropped`), 0));
+  const len = (id) => { const m = picks[order.get(id)]; return m ? m.e - m.s : 2; };
+  for (const x of (Array.isArray(plan.quiz) ? plan.quiz : []).slice(0, 5)) {
+    const q = picked(x?.q, "quiz question");
+    if (!q) continue;
+    if (x.ask) texts.push({ m: q, text: x.ask, pos: "top" });
+    let a = x.a != null && x.answer ? picked(x.a, "quiz answer") : 0;
+    if (a && order.get(a) < order.get(q)) { issues.push(`quiz answer M${a} plays before its question M${q} → dropped`); a = 0; }
+    if (!a) {
+      // open question: the timer runs out, viewers answer in the comments
+      marks.push({ m: q, type: "bar", _off: 0.6, _d: Math.max(1.5, len(q) - 0.8) });
+      continue;
+    }
+    const off = a === q ? Math.max(1, len(q) * 0.55) : 0.2;
+    const wait = at.get(a) + off - (at.get(q) + 0.6);
+    if (wait >= 1) marks.push({ m: q, type: "bar", _off: 0.6, _d: wait - 0.1 });
+    texts.push({ m: a, text: x.answer, pos: "top", anim: "highlight", _off: off });
+    marks.push({ m: a, type: "sticker", name: "check", _off: off + 0.1 }, { m: a, type: "sparkle", _off: off });
+  }
+  for (const [i, x] of (Array.isArray(plan.list) ? plan.list : []).slice(0, 7).entries()) {
+    const m = picked(x?.m, "list point");
+    if (m && x.text) texts.push({ m, text: `${persianDigits(i + 1, x.text)}. ${x.text}`, pos: "top", anim: "pop" });
+  }
+  const b = plan.before && picked(plan.before.m, "before"), af = plan.after && picked(plan.after.m, "after");
+  if (b && plan.before.text) texts.push({ m: b, text: plan.before.text, pos: "top" });
+  if (af) {
+    if (plan.after.text) texts.push({ m: af, text: plan.after.text, pos: "top", anim: "highlight" });
+    marks.push({ m: af, type: "sparkle" }, { m: af, type: "burst", _off: 0.25 });
+  }
+  if (plan.ending && picks.length) {
+    const last = picks[picks.length - 1].id, off = Math.max(0.2, len(last) - 3);
+    texts.push({ m: last, text: plan.ending, pos: "center", anim: "shake", _off: off, _d: Math.max(1.5, Math.min(3.5, len(last) - off)) });
+    if (Array.isArray(plan.quiz) && plan.quiz.length) marks.push({ m: last, type: "sticker", name: "think", _off: off + 0.1 });
+  }
+  return { texts, marks };
 }

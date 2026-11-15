@@ -376,6 +376,15 @@ CASES["moments-game-photo"] = {
   files: [["video", "game.mp4"], ["image", "quiz.jpg"]], expectMoments: 11,
   plan: { recipe: "quiz", moments: [9, 6, 11, 3], texts: [{ m: 9, text: "جوابشو می‌دونی؟", pos: "top" }, { m: 11, text: "کامنت کن", pos: "center" }], framed: [1], music: "energetic", look: "natural", coverFrom: { m: 6 }, cover: "کوییز فوتبالی", cta: "کامنت کن" },
 };
+// the quiz template: the model only names question / answer moments + words; timer, reveal, ✅, 🤔 come from code
+CASES["moments-quiz-template"] = {
+  files: [["video", "game.mp4"], ["image", "quiz.jpg"]], expectMoments: 11, expectMarks: ["bar", "check", "sparkle", "think", "question"], expectTexts: 5,
+  plan: {
+    recipe: "quiz", moments: [3, 4, 6, 9, 11], texts: [{ m: 3, text: "کوییز فوتبالی من", pos: "top" }], framed: [1],
+    quiz: [{ q: 4, ask: "این بازیکن کیه؟", a: 6, answer: "زیدان" }, { q: 9, ask: "حالا این یکی؟" }], ending: "جوابتو کامنت کن",
+    marks: [{ m: 9, type: "sticker", name: "question" }], music: "energetic", look: "natural", coverFrom: { m: 6 }, cover: "کوییز فوتبالی", cta: "کامنت کن",
+  },
+};
 
 // Arcane run 2 replayed offline (copyrighted, local only): the real plan + the real Whisper junk it got.
 // Before P0-2 this rendered with voice filters on the film mix and the film audio at full level under the music.
@@ -490,7 +499,9 @@ for (const [name, c] of Object.entries(CASES)) {
       !c.planIssuesOk && o.planIssues?.length && `plan: ${o.planIssues.join(" | ")}`,
       c.expectSoft && !o.transitions.some((n) => ["dip", "fade"].includes(n)) && "no soft transition",
       c.expectBackdrop && !o.backdrops && "no text backing",
-      c.expectMoments && o.moments !== c.expectMoments && `${o.moments} moments, want ${c.expectMoments}`].filter(Boolean).join("; ");
+      c.expectMoments && o.moments !== c.expectMoments && `${o.moments} moments, want ${c.expectMoments}`,
+      c.expectMarks && c.expectMarks.filter((k) => !(r.plan.marks || []).some((m) => m.type === k || m.name === k)).map((k) => `no ${k}`).join(" "),
+      c.expectTexts && (r.plan.texts || []).length < c.expectTexts && `${(r.plan.texts || []).length} texts, want ${c.expectTexts}`].filter(Boolean).join("; ");
     results.push({
       case: name, ok: durOk && loudOk && !audioFail && r.usage.tokens === 0, sec: ((Date.now() - t0) / 1000).toFixed(0),
       dur: real.toFixed(1), lufs: lufs.toFixed(1), tokens: r.usage.tokens,
