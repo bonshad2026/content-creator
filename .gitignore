@@ -1,0 +1,33 @@
+node_modules/
+.env
+
+# user data, uploads, test footage and test output (personal; never in git)
+data/
+data-demo/
+
+# no video files anywhere, ever: the user picks by hand which ones (if any) get committed
+*.mp4
+*.mov
+*.m4v
+*.webm
+*.ogv
+*.mkv
+*.avi
+*.wmv
+*.flv
+*.3gp
+*.ts
+
+# samples made from the user's own footage (videos, covers, frames) stay local; only the written report is kept
+demo-output/**
+!demo-output/
+!demo-output/expert/
+!demo-output/expert/REPORT.md
+
+# generated at runtime (light leaks are drawn by ffmpeg on first use; risers made from the impact sounds)
+assets/overlays/
+assets/sfx/riser/
+
+# local tool / editor state
+.claude/settings.local.json
+*.log
