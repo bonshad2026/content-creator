@@ -202,7 +202,8 @@ export async function transcribe(audioFile, language = "") {
  * One call that both writes the post and plans the video edit.
  * inputs: [{n, type, duration, hasSpeech, frames:[{t, b64}]}], transcript: [{n, start, end, text}]
  */
-export async function planReel(profileText, inputs, transcript, brief, spokenLang = "", moods = [], target = null) {
+export async function planReel(profileText, inputs, transcript, brief, spokenLang = "", moods = [], target = null, moments = null) {
+  if (moments) return planByMoments(profileText, inputs, transcript, brief, spokenLang, moods, target, moments);
   if (demoMode && !process.env.AI_DRYRUN) return mockReelPlan(inputs);
   const content = [{ type: "text", text: `Goal / topic of this post: ${brief || "(none, pick the best angle from the media)"}` }];
   if (target) content.push({ type: "text", text: `TARGET LENGTH: the creator asked for about ${target} s. Make the clips add up to ${Math.round(target * 0.9)}-${Math.round(target * 1.05)} s (a clip with speed lasts (e-s)/speed).` });
@@ -235,6 +236,65 @@ export async function planReel(profileText, inputs, transcript, brief, spokenLan
 const audioNote = (inp) => (inp.audioClass === "speech" || (!inp.audioClass && inp.hasSpeech) ? ", has speech" : inp.audioClass === "music_or_mixed" ? ", has its own soundtrack (muted under the background music you pick; with music \"none\" it plays as is)" : "");
 
 /** The editor's rulebook (identical for every reel → cacheable). The detailed craft lives in code (recipes.js, reel.js). */
+/**
+ * P1-5 "moments" mode (AI_PLAN_MODE=moments): the model CHOOSES, it does not compose. It sees numbered moments
+ * (found and scored locally, one labelled contact sheet per video) and answers with moment numbers, a recipe and
+ * a few short texts. Timing, transitions, animation, sound, positions and length are all done in code.
+ * moments: [{id, n, s, e, kind, sheet?}] — inputs carry `momentSheet` (b64) for videos, `frames` for photos.
+ */
+async function planByMoments(profileText, inputs, transcript, brief, spokenLang, moods, target, moments) {
+  if (demoMode && !process.env.AI_DRYRUN) return mockMomentPlan(moments);
+  const content = [{ type: "text", text: `Goal / topic of this post: ${brief || "(none, pick the best angle from the media)"}` }];
+  if (target) content.push({ type: "text", text: `Length: about ${target} s (the app fits it exactly; pick roughly enough moments).` });
+  // a speech moment points at its lines (#a-#b in the speech list below) instead of repeating the words
+  const lineIds = (m) => transcript.map((l, i) => (l.n === m.n && l.start < m.e && l.end > m.s ? i : -1)).filter((i) => i >= 0);
+  const says = (m) => { const ids = lineIds(m); return ids.length ? ` speech #${ids[0]}${ids.length > 1 ? `-#${ids[ids.length - 1]}` : ""}` : ""; };
+  for (const inp of inputs) {
+    const own = moments.filter((m) => m.n === inp.n);
+    if (!own.length) continue;
+    const list = own.map((m) => `M${m.id} ${(m.e - m.s).toFixed(1)}s${m.kind === "speech" ? says(m) : ""}`).join(" · ");
+    if (inp.type === "image") {
+      content.push({ type: "text", text: `Input ${inp.n}: photo = M${own[0].id}` });
+      content.push(img(inp.frames[0].b64));
+      continue;
+    }
+    content.push({ type: "text", text: `Input ${inp.n}: video, ${inp.duration.toFixed(0)}s${audioNote(inp)}. Its moments in time order (each cell of the sheet is labelled): ${list}` });
+    if (inp.momentSheet) content.push(img(inp.momentSheet));
+  }
+  if (transcript.length)
+    content.push({ type: "text", text: `Speech lines (language: ${spokenLang || "unknown"}), #index text:\n` + transcript.map((s, i) => `#${i} ${s.text}`).join("\n") });
+  return call(`${momentRules(moods)}\n\nCREATOR STYLE:\n${profileText}`, content, PLAN_LIMIT, "plan-moments");
+}
+
+/** The short rulebook of moments mode: decisions only, no numbers to invent except moment / line numbers. */
+function momentRules(moods) {
+  return (
+    "You are ONE creator's video editor and copywriter. From numbered moments of their footage, choose what goes into a vertical short (Reels/Shorts), and write the post in their exact voice.\n\n" +
+    `1. recipe: one of [${RECIPE_NAMES.map((r) => `${r} (${RECIPES[r].about})`).join("; ")}].\n` +
+    "2. moments: the moment numbers to use, in the order they should play. Open with the most striking one. Keep the story clear; skip dull or repeated moments. With speech, keep the moments whose words matter, in order.\n" +
+    "3. texts: 1-4 short on-screen lines (max 5 words, no emoji), each on a picked moment: {\"m\":3,\"text\":\"...\",\"pos\":\"top\"|\"center\"}. The first one, on the first moment, is the hook. Never repeat what is said aloud.\n" +
+    "4. Optional: slow = moment numbers to play in slow motion (a dramatic action, never speech); framed = input numbers that are screen recordings / app or game UI; emphasis = up to 3 speech line numbers (#) that are the key sentences.\n" +
+    "5. If there is speech: subs = one string per speech line, same order, fixed for mis-heard words (e.g. 'گانلود' → 'دانلود'), in the creator's content language (translate if needed), no emoji. subtitles = true if the words matter.\n" +
+    (moods.length ? `6. music: one of [${moods.join(", ")}] or "none".\n` : "") +
+    `7. look: one of [${Object.keys(LOOKS).join(", ")}] ("natural" if it already looks good). coverFrom: {"m": the best-looking moment}, cover: max 5 words.\n` +
+    "8. The post: caption (WITHOUT hashtags), hashtags, 3 alternative hooks, cta (max 4 words), up to 2 short tips.\n\n" +
+    "The app does all timing, cuts, transitions, animation, sound and length. " +
+    'Reply ONLY with JSON: {"recipe":"...","moments":[1,4,7],"texts":[{"m":1,"text":"...","pos":"top"}],"slow":[],"framed":[],"emphasis":[],"subtitles":false,"subs":[],' +
+    (moods.length ? '"music":"...",' : "") +
+    '"look":"natural","coverFrom":{"m":4},"cover":"...","cta":"...","hooks":["..."],"caption":"...","hashtags":["#..."],"tips":[]}'
+  );
+}
+
+async function mockMomentPlan(moments) {
+  await new Promise((r) => setTimeout(r, 800));
+  // demo: the best-scoring moments in time order, a hook on the first
+  const pick = [...moments].sort((a, b) => b.score - a.score).slice(0, 4).sort((a, b) => a.n - b.n || a.s - b.s).map((m) => m.id);
+  return {
+    data: { recipe: "promo", moments: pick, texts: [{ m: pick[0], text: "(دمو) اینو ببینید", pos: "top" }], look: "vivid", coverFrom: { m: pick[0] }, cover: "نمونه دمو", cta: "فالو کن", hooks: ["اینو ببینید"], caption: "(نمونه‌ی دمو) کپشن ریل", hashtags: ["#دمو"], tips: [] },
+    usage: { tokens: 0, cost: 0 },
+  };
+}
+
 function reelRules(moods) {
   return (
     "You are ONE creator's video editor and copywriter. Make a vertical short (Reels/Shorts) from their raw inputs and write the post, in their exact voice.\n\n" +

@@ -5,6 +5,7 @@ import path from "node:path";
 import { probe, frameAt, extractAudio, detectSilences, sceneChanges, contactSheet, detectBars, sfxLibrary, ensureRisers, colorStats, autoCorrect, matchFilter, LOOKS, TRANSITIONS, TEXT_ANIMS, PHOTO_BOX, SAFE, STICKER_DIR, listStickers, leakFile, transitionLength, buildAss, renderReel, renderCover, jobDir, bandStats, TEXT_BAND, BACKDROP, W, H } from "./media.js";
 import { pickRecipe, recipeTransitions, recipeAnim, RECIPE_NAMES } from "./recipes.js";
 import { normalizePlan } from "./plan.js";
+import { activity, pickMoments, momentsToPlan } from "./moments.js";
 import { transcribe, planReel } from "./ai.js";
 import { trustedLine, classifyAudio, coveredSeconds, measureAudio, NOISY_FLOOR_DB } from "./audio.js";
 import { fitLength } from "./length.js";
@@ -266,6 +267,30 @@ export async function runReel(job, profileText, setStage, manual = null) {
     retime(transcript.filter((s) => s.n === v.n), silencesOf[v.n], v.duration);
   }
 
+  // 2b) moments mode (P1-5, AI_PLAN_MODE=moments, or a plan written with moment numbers): the footage is cut into
+  //     numbered, locally scored moments and each video becomes ONE labelled contact sheet; the model picks numbers
+  const momentMode = manual?.plan ? Array.isArray(manual.plan.moments) : process.env.AI_PLAN_MODE === "moments";
+  let moments = null;
+  if (momentMode) {
+    const perVideo = {};
+    for (const v of videos) {
+      const file = path.join(dir, v.file);
+      perVideo[v.n] = {
+        lines: v.hasSpeech ? transcript.filter((s) => s.n === v.n) : [], cuts: v.scenes || [],
+        silences: silencesOf[v.n] || (v.hasAudio ? await detectSilences(file).catch(() => []) : []),
+        act: await activity(file).catch(() => ({ motion: [], loud: [] })),
+      };
+    }
+    moments = pickMoments(inputs, perVideo, IMAGE_SEC);
+    for (const v of videos) {
+      const own = moments.filter((m) => m.n === v.n);
+      if (!own.length) continue;
+      const sheet = await contactSheet(dir, v.file, own.map((m) => (m.s + m.e) / 2), `msheet${v.n}.jpg`, v.height > v.width, own.map((m) => `M${m.id}`));
+      v.momentSheet = fs.readFileSync(sheet).toString("base64");
+    }
+    console.log(`moments: ${moments.length} (${moments.map((m) => `M${m.id} ${m.n}@${m.s.toFixed(1)}`).join(", ")})`);
+  }
+
   // 3) one AI call: post text + edit plan (manual.plan = a ready plan: hand-written in tests, or the revised plan of a "revise";
   //    manual without a plan = known transcript, real planner request: used by the token budget dry run)
   setStage("writing");
@@ -274,13 +299,16 @@ export async function runReel(job, profileText, setStage, manual = null) {
   const askedLength = job.length || targetSeconds(job.brief);
   const { data: rawPlan, usage: u } = manual?.plan
     ? { data: manual.plan, usage: { tokens: 0, cost: 0 } }
-    : await planReel(profileText, inputs, transcript, job.brief, spokenLang, moods, askedLength);
+    : await planReel(profileText, inputs, transcript, job.brief, spokenLang, moods, askedLength, moments);
   usage.tokens += u.tokens;
   usage.cost += u.cost;
   // every plan (model, revise, hand-written, demo) goes through the one schema: repaired, never trusted (src/plan.js)
-  const { plan, issues: planIssues } = normalizePlan(rawPlan, {
+  // a moment-picking answer becomes a normal plan (seconds) here; from now on there is only one kind of plan
+  const fromMoments = moments && Array.isArray(rawPlan?.moments) ? momentsToPlan(rawPlan, moments) : null;
+  const { plan, issues: planIssues } = normalizePlan(fromMoments ? fromMoments.plan : rawPlan, {
     inputs, recipes: RECIPE_NAMES, looks: Object.keys(LOOKS), moods, stickers: listStickers(), anims: TEXT_ANIMS, transitions: Object.keys(TRANSITIONS),
   });
+  if (fromMoments) planIssues.unshift(...fromMoments.issues);
   if (planIssues.length) console.warn(`plan: ${planIssues.length} repaired / dropped:\n  ${planIssues.join("\n  ")}`);
   // subtitles: the AI's corrected (or translated) lines, with the original timings; raw speech-to-text as fallback
   const fixed = Array.isArray(plan.subs) && transcript.length > 0 && plan.subs.length === transcript.length && plan.subs.every((x) => typeof x === "string" && x.trim());
@@ -706,7 +734,7 @@ export async function runReel(job, profileText, setStage, manual = null) {
   });
 
   // tidy: keep inputs (for retry / revise), drop scratch files
-  for (const f of fs.readdirSync(dir)) if (/^(f\d+-\d+\.jpg|a\d+\.mp3|sheet\d+\.jpg|cell-\d+\.jpg|bd\d+\.jpg|bd\.ass)$/.test(f)) fs.rmSync(path.join(dir, f), { force: true });
+  for (const f of fs.readdirSync(dir)) if (/^(f\d+-\d+\.jpg|a\d+\.mp3|sheet\d+\.jpg|cell-\d+\.jpg|bd\d+\.jpg|bd\.ass|msheet\d+\.jpg)$/.test(f)) fs.rmSync(path.join(dir, f), { force: true });
 
   return {
     output: {
@@ -718,6 +746,7 @@ export async function runReel(job, profileText, setStage, manual = null) {
       smartCrop: Object.keys(tracks).some((n) => cropMode(byN[n])), colorFixed: Object.values(auto).filter(Boolean).length,
       audio: Object.fromEntries(videos.map((v) => [v.n, v.audioClass + (v.denoise ? "+denoise" : "")])),
       planIssues,
+      moments: moments ? moments.length : null,
       backdrops: [...texts, ...subs].filter((t) => t.backdrop).length,
       narration: transcript.length
         ? { language: spokenLang, text: subSource.map((s) => s.text).join(" "), original: transcript.map((s) => s.text).join(" ") }

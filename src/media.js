@@ -63,13 +63,14 @@ export async function probe(file) {
 /**
  * Contact sheet for LONG videos: many small frames, each labelled with its time, tiled into ONE image.
  * The AI sees the whole video (e.g. 24 moments) for about the token price of 4 separate frames.
+ * labels: text per cell instead of its time (e.g. "M3" when the model picks moments by number).
  */
-export async function contactSheet(cwd, file, times, outFile, portrait) {
+export async function contactSheet(cwd, file, times, outFile, portrait, labels = null) {
   const cw = portrait ? 144 : 256, ch = portrait ? 256 : 144, cols = portrait ? 6 : 4;
   const font = path.relative(cwd, path.join(FONT_DIR, "Vazirmatn-Bold.ttf")).replace(/\\/g, "/");
   for (let i = 0; i < times.length; i++)
     await ffmpeg(["-ss", times[i].toFixed(2), "-i", file, "-frames:v", "1", "-vf",
-      `scale=${cw}:${ch}:force_original_aspect_ratio=decrease,pad=${cw}:${ch}:(ow-iw)/2:(oh-ih)/2,drawtext=fontfile=${font}:text='${times[i].toFixed(1)}s':x=4:y=4:fontsize=17:fontcolor=white:box=1:boxcolor=black@0.75:boxborderw=3`,
+      `scale=${cw}:${ch}:force_original_aspect_ratio=decrease,pad=${cw}:${ch}:(ow-iw)/2:(oh-ih)/2,drawtext=fontfile=${font}:text='${labels ? labels[i] : `${times[i].toFixed(1)}s`}':x=4:y=4:fontsize=17:fontcolor=white:box=1:boxcolor=black@0.75:boxborderw=3`,
       "-q:v", "4", `cell-${i}.jpg`], cwd);
   await ffmpeg(["-framerate", "1", "-start_number", "0", "-i", "cell-%d.jpg", "-vf", `tile=${cols}x${Math.ceil(times.length / cols)}`, "-frames:v", "1", "-q:v", "4", outFile], cwd);
   for (let i = 0; i < times.length; i++) fs.rmSync(path.join(cwd, `cell-${i}.jpg`), { force: true });

@@ -370,6 +370,13 @@ CASES["length-extend-30"] = {
   plan: { clips: [{ n: 1, s: 2, e: 6 }, { n: 2, s: 0, e: 3 }, { n: 1, s: 20, e: 24 }], texts: [{ t: 0, d: 2.5, text: "جوابشو می‌دونی؟", pos: "top" }], subtitles: false, music: "energetic", look: "natural", transitions: [], coverFrom: { n: 1, s: 3 }, cover: "" },
 };
 
+// moments mode (P1-5): plans written with moment NUMBERS, as a cheap model would answer; the code finds the seconds.
+// (moment numbers come from the local analysis: game.mp4 → M1-M10 by time, the photo → M11)
+CASES["moments-game-photo"] = {
+  files: [["video", "game.mp4"], ["image", "quiz.jpg"]], expectMoments: 11,
+  plan: { recipe: "quiz", moments: [9, 6, 11, 3], texts: [{ m: 9, text: "جوابشو می‌دونی؟", pos: "top" }, { m: 11, text: "کامنت کن", pos: "center" }], framed: [1], music: "energetic", look: "natural", coverFrom: { m: 6 }, cover: "کوییز فوتبالی", cta: "کامنت کن" },
+};
+
 // Arcane run 2 replayed offline (copyrighted, local only): the real plan + the real Whisper junk it got.
 // Before P0-2 this rendered with voice filters on the film mix and the film audio at full level under the music.
 const arcane = path.resolve("data/test-out/arcane-plan2.json");
@@ -380,6 +387,11 @@ if (fs.existsSync(arcane)) {
     expectSoft: true, expectBackdrop: true };
   // asked 60 s, the real model planned 55 s → code makes it 60
   CASES["length-arcane-60"] = { ...CASES["arcane-soundtrack"], length: 60 };
+  // the whole 290 s fight offered as 24 numbered moments; a spread of them picked, 30 s asked
+  CASES["moments-arcane-30"] = {
+    files: [["video", "arcane.mp4"]], length: 30, expectMoments: 24, expectAudio: { 1: "music_or_mixed" },
+    plan: { recipe: "cinematic", moments: [1, 4, 9, 14, 18, 22, 24], slow: [14], texts: [{ m: 1, text: "نبرد آخر", pos: "top" }, { m: 22, text: "لحظه‌ی آخر", pos: "center" }], music: "epic", look: "cinematic", coverFrom: { m: 14 }, cover: "نبرد آخر" },
+  };
 }
 
 const loudness = async (file) => {
@@ -477,7 +489,8 @@ for (const [name, c] of Object.entries(CASES)) {
       // hand-written plans must be valid as written (the schema would hide a broken test plan by repairing it)
       !c.planIssuesOk && o.planIssues?.length && `plan: ${o.planIssues.join(" | ")}`,
       c.expectSoft && !o.transitions.some((n) => ["dip", "fade"].includes(n)) && "no soft transition",
-      c.expectBackdrop && !o.backdrops && "no text backing"].filter(Boolean).join("; ");
+      c.expectBackdrop && !o.backdrops && "no text backing",
+      c.expectMoments && o.moments !== c.expectMoments && `${o.moments} moments, want ${c.expectMoments}`].filter(Boolean).join("; ");
     results.push({
       case: name, ok: durOk && loudOk && !audioFail && r.usage.tokens === 0, sec: ((Date.now() - t0) / 1000).toFixed(0),
       dur: real.toFixed(1), lufs: lufs.toFixed(1), tokens: r.usage.tokens,

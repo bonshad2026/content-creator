@@ -37,8 +37,8 @@ upload → probe / scene detection / frames (or contact sheet if >60 s)
 | `public/app.js` | 658 | Single-page app. |
 | `scripts/test-reel.mjs` | 428 | Offline tests: hand-written plans, 0 tokens. |
 
-Commands: `npm start` (app), `npm run demo` (port 3010, demo AI, separate data), `npm run test:reel` (22 offline render
-cases), `npm run test:audio`, `test:ai`, `test:length`, `test:plan`, `test:style` (unit tests, seconds), `npm run token-budget` (planner request size, 0 tokens).
+Commands: `npm start` (app), `npm run demo` (port 3010, demo AI, separate data), `npm run test:reel` (24 offline render
+cases), `npm run test:audio`, `test:ai`, `test:length`, `test:plan`, `test:style`, `test:moments` (unit tests, seconds), `npm run token-budget` (planner request size, 0 tokens).
 Samples and the earlier report: `demo-output/expert/`.
 
 ## 3. What is verified and what is not
@@ -358,3 +358,33 @@ belongs with the `runReel` split (P2-1).
 (one per recipe: quiz, list, before-after, tutorial, story, hook, promo, cinematic, talk).
 **Not verified:** how the backing looks on a phone (checked only in frame grabs), and the thresholds on footage
 other than the fixtures.
+
+### 2026-11-15 — P1-5 step 1: the model picks numbered moments (offline only, 0 tokens)
+Switch: **`AI_PLAN_MODE=moments`** (default is still the old seconds-based prompt until a real comparison run).
+- **`src/moments.js`** — local, free:
+  - `cutMoments`: speech → whole sentences grouped up to 6 s (a sentence is never split; moments never overlap);
+    other footage → shots, long shots split near pauses, shots under 1.2 s merged into the next one.
+  - `activity` + `scoreMoments`: motion (frame difference) and loudness per 0.5 s, ranked within the video, + a
+    bonus for speech. `pickMoments`: max 24 per reel, by duration; **75 % of them are the best of equal time slices**
+    (coverage: a fight that gets louder towards the end can't fill the list — the Arcane run 1 failure), the rest
+    by score; numbered M1..MN by input and time. Photos are one moment each.
+  - `momentsToPlan`: `{"moments":[3,1,7], "texts":[{"m":3,…}], "slow":[7], "coverFrom":{"m":7}}` → the normal
+    plan in seconds (clips, text and mark times on the output timeline, cover). Slow motion never on speech.
+    Unknown / repeated / unpicked numbers are dropped and reported. After this there is one kind of plan again
+    (schema, length fitting and render unchanged).
+- **Prompt (`planByMoments` / `momentRules`)**: each video = ONE contact sheet whose cells are labelled M#,
+  plus a one-line list (`M3 4.0s speech #2-#4`); speech lines are listed once, by number. The rulebook is 8 short
+  decisions and asks for no seconds or coordinates at all. Demo mode has a matching mock.
+- **Prompt size (dry run, estimates)** — old mode → moments mode: talking head 2,573 → 1,719; screen recording
+  2,194 → 1,459; photos 1,949 → 1,019; mixed 2,612 → 1,930; 5 b-roll clips 3,038 → 2,589; Arcane 3,549 → 2,111.
+  Rules 1,589 → 693.
+- **Tests:** `npm run test:moments` (17 checks) and render cases `moments-game-photo` (4 picks → 12.4 s) and
+  `moments-arcane-30` (7 picks spread over 290 s, 30 s asked → 31.2 s).
+
+**Not done in P1-5 yet:**
+- Recipes as full templates (slot structure "hook → 3 beats → reveal → end card", text slots with max words).
+- Faces in the moment score (the face tracker is too slow to run over whole videos; needs a cheaper signal).
+- **The measurement**: the same saved inputs through Opus (old mode), Opus (moments mode) and one cheaper model
+  (moments mode), judged by the P2-2 rubric. Needs real runs — only when the user approves. Until then the old mode
+  stays the default.
+**Not verified:** whether a model actually answers well from labelled sheets (only hand-written moment plans so far).
