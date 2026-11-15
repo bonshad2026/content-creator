@@ -473,3 +473,36 @@ It now matches the eye on the quiz set. Still blind to: blurry / weak moments (H
 scores 1), and a spoiler inside the footage (an answer already highlighted in a game frame).
 
 **Next:** the real comparison again with the templates (needs user approval; ~12 plan requests ≈ 45k tokens).
+
+### 2026-11-15 — second REAL comparison, with templates + new rubric (user-approved, 12 plan requests)
+
+Same 4 sets × 3 configs. 53.8k tokens in total (estimate was 45k); Haiku cost $0.0018 for its 4; Opus still
+reports no cost and 0 cached. First run's outputs kept in `data/test-out/compare-v1/`; the new plans are saved in
+`scripts/fixtures/real-plans-v2/` (replayable for free).
+
+| config | prompt | reply | total | rubric avg |
+|---|---|---|---|---|
+| Opus, old prompt | 3,910 | 1,248 | 5,158 | 0.97 |
+| Opus, moments | 3,156 | 690 | 3,846 (−25 %) | 0.90 |
+| Haiku, moments | 3,162 | 1,275 | 4,437 (−14 %) | 0.94 |
+
+The moments prompt grew ~450 tokens with the templates (2,701 → 3,156 avg), so the saving fell from −36 % to −25 %.
+
+**Quiz set (judged by eye):** the templates work. Both moments runs now make a real quiz: question + timer →
+"زیدان" ✅ + sparkle → question 2 + timer → "آلمان" ✅ → question 3 left open with a timer. Haiku put the
+question before the answer correctly this time (no spoiler). Opus with the old prompt picked `promo` this time
+(reveal with arrows, no comment ending): the old prompt is not stable on this set either.
+Problems found:
+1. Question texts too long (rubric `texts` fails): Haiku copied the whole on-screen question (3 lines, 10 words),
+   Opus 5–6 words. The prompt does not say `ask` is ≤ 5 words, and it should say "tease it, the question is on screen".
+2. Opus-moments again ended on the near-empty game end screen (rubric `ending` caught it), with its closing line
+   and a 👇 on it. A model cannot see "blank" well on a small sheet cell → code should flag blank moments
+   (dark + flat, the same test as the rubric) in the list and drop a trailing blank pick.
+3. Opus-moments also put its own ✅ on the answer moment → doubled with the template's ✅ and hit the 10-mark limit
+   (1 dropped). Code should skip a model sticker where the template already put one.
+4. Loudness of the quiz reels -16.1 / -16.2 LUFS (just outside the window): many sound effects → the limiter
+   takes the peaks. Known since P0-3; not new.
+Talk, film and b-roll: rubric only (1 / 1 / 1 except `texts` on two runs: a 6-word comment question).
+
+**Next:** fix 1–3 (offline, small), replay the saved v2 plans through the fixed code to check, then decide
+whether moments mode becomes the default for quiz/talk.

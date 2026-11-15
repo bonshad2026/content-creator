@@ -1,0 +1,106 @@
+{
+ "model": "claude-opus-5-5",
+ "date": "2026-11-15",
+ "raw": {
+  "recipe": "promo",
+  "moments": [
+   7,
+   1,
+   6,
+   9,
+   19,
+   23,
+   11,
+   13,
+   14,
+   21,
+   22,
+   24
+  ],
+  "texts": [
+   {
+    "m": 7,
+    "text": "نبرد آخر آرکین",
+    "pos": "center"
+   },
+   {
+    "m": 19,
+    "text": "اینجا همه‌چی منفجر شد",
+    "pos": "top"
+   },
+   {
+    "m": 24,
+    "text": "پایان یه افسانه",
+    "pos": "top"
+   }
+  ],
+  "quiz": [],
+  "list": [],
+  "ending": "بهترین صحنه کدوم بود؟",
+  "marks": [
+   {
+    "m": 7,
+    "type": "burst"
+   },
+   {
+    "m": 13,
+    "type": "sticker",
+    "name": "fire"
+   },
+   {
+    "m": 23,
+    "type": "sparkle"
+   }
+  ],
+  "slow": [
+   14
+  ],
+  "framed": [],
+  "emphasis": [],
+  "subtitles": false,
+  "subs": [],
+  "music": "epic",
+  "look": "cinematic",
+  "coverFrom": {
+   "m": 1
+  },
+  "cover": "نبرد آخر آرکین",
+  "cta": "کامنت کن",
+  "hooks": [
+   "این نبرد آرکین رو دیدی؟",
+   "حماسی‌ترین صحنه‌های آرکین",
+   "آخرش رو از دست نده"
+  ],
+  "caption": "نبرد آخر آرکین واقعاً یه چیز دیگه بود 🔥 کیتلین، جینکس، وای... کدوم صحنه بیشتر بهت حال داد؟ کامنت کن 👇",
+  "hashtags": [
+   "#آرکین",
+   "#arcane",
+   "#لیگ_آف_لجندز",
+   "#ادیت"
+  ],
+  "tips": [
+   "با صدا ببین",
+   "تا آخر بمون"
+  ]
+ },
+ "usage": {
+  "tokens": 3617,
+  "cost": 0,
+  "requests": [
+   {
+    "at": "2026-11-15T17:51:37.218Z",
+    "label": "plan-moments",
+    "model": "claude-opus-5-5",
+    "attempt": 1,
+    "finish": "stop",
+    "limit": 6000,
+    "prompt": 3098,
+    "reply": 519,
+    "total": 3617,
+    "cached": 0,
+    "reasoning": null,
+    "cost": null
+   }
+  ]
+ }
+}
