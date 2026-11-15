@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import express from "express";
 import { jobDir } from "./src/media.js";
-import { getDb, save, newId, saveFrames, deleteFrames, uploadDir } from "./src/store.js";
+import { getDb, save, flushSync, newId, saveFrames, deleteFrames, uploadDir } from "./src/store.js";
 import { sendCode, verifyCode, requireUser, logout, smsEnabled } from "./src/auth.js";
 import { demoMode, MODEL } from "./src/ai.js";
 import { enqueue } from "./src/jobs.js";
@@ -52,6 +52,9 @@ const brandSnapshot = (u) => {
 };
 // (the edit plan / transcript / brand paths stay on the server; the app only needs to know a reel can be revised)
 const jobView = ({ userId, plan, transcript, spokenLang, brand, ...j }) => ({ ...j, revisable: !!plan });
+
+// ---------- health (no auth; for the container / proxy) ----------
+app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
 // ---------- auth ----------
 app.get("/api/config", (_req, res) => res.json({ demoMode, smsEnabled, model: MODEL }));
@@ -347,6 +350,13 @@ server.disable("x-powered-by");
 // "/creator" → "/creator/": the page's relative URLs need the trailing slash
 if (BASE) server.use((req, res, next) => (req.path === BASE ? res.redirect(301, BASE + "/" + (req.originalUrl.slice(BASE.length) || "")) : next()));
 server.use(BASE || "/", app);
+// shutdown (supervisord sends SIGTERM on every deploy): write a pending db save first, then exit.
+// Unfinished jobs are picked up again on the next start (jobs.js).
+for (const sig of ["SIGTERM", "SIGINT"])
+  process.once(sig, () => {
+    try { flushSync(); } catch (e) { console.error("db flush failed:", e); }
+    process.exit(0);
+  });
 server.listen(port, "0.0.0.0", () => {
   const ips = Object.values(os.networkInterfaces()).flat().filter((i) => i && i.family === "IPv4" && !i.internal).map((i) => i.address);
   console.log(`Content Creator Expert  ${demoMode ? "(DEMO: no GAPGPT_API_KEY)" : `(model: ${MODEL})`}  ${smsEnabled ? "" : "(SMS off: codes are shown on screen)"}`);

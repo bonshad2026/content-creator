@@ -17,11 +17,26 @@ export const uploadDir = UPLOAD_DIR;
 export const getDb = () => db;
 export const newId = (n = 10) => crypto.randomBytes(n).toString("base64url").slice(0, n);
 
+// atomic: write a temp file, then rename over db.json, so a kill mid-write never leaves a half-written db.json
+function writeNow() {
+  const tmp = DB_FILE + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(db, null, 1));
+  fs.renameSync(tmp, DB_FILE);
+}
+
 let saveTimer = null;
 export function save() {
   // debounce: many small updates (job status) → one write
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 1)), 150);
+  saveTimer = setTimeout(() => { saveTimer = null; writeNow(); }, 150);
+}
+
+/** Write a pending save right now (synchronously). Called on shutdown. */
+export function flushSync() {
+  if (!saveTimer) return;
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  writeNow();
 }
 
 // Save base64 JPEG frames (data URLs) to disk; returns public URLs.

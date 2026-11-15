@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
-import ffmpegPath from "ffmpeg-static";
+import { ffmpegPath } from "./ffmpeg-path.js";
 
 const SAMPLE_W = 480, FPS = 2; // 480 px: small faces in wide shots are still found
 let ready = null;

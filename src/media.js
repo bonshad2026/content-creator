@@ -1,9 +1,9 @@
 // ffmpeg helpers: probe, frames for the AI, audio for speech-to-text, final 9:16 render and cover.
-// ffmpeg comes from the ffmpeg-static npm package (includes libass + harfbuzz + fribidi → correct Persian text).
+// ffmpeg: ffmpeg-static by default, or FFMPEG_PATH (see ffmpeg-path.js).
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import ffmpegPath from "ffmpeg-static";
+import { ffmpegPath } from "./ffmpeg-path.js";
 
 export const W = 720, H = 1280; // output size (9:16). 720p keeps rendering fast on a normal PC.
 const FONT_DIR = path.resolve("node_modules/vazirmatn/fonts/ttf");
