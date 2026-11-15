@@ -448,3 +448,28 @@ Next items 1 and 2 above. The model still only names moments and words; the stru
   The saved real plans have no template fields, so how well a model *uses* them is unknown until the next real run.
 
 **Next:** item 3 (rubric fixes), then item 4 (real comparison again, needs user approval).
+
+### 2026-11-15 — rubric fixes (offline only, 0 tokens)
+
+Item 3 above. The rubric moved to `scripts/rubric.mjs` (shared by `compare-models.mjs` and the new
+`npm run rescore`, which re-scores the saved runs in `data/test-out/compare/` → `rescore.json`).
+- `cover` fixed: a long video must be spread over min(3, its clip count) of its 5 slices (a 15 s reel with one
+  clip of a 47 s video failed before).
+- `ending` new: the last shot's last frame is not empty (dark < 40 luma AND flat < 3 edges; calibrated: the empty
+  game end screen = 16 / 1.4, the plainest good ending, a talking head on a light wall = 137 / 2.3).
+- `reveal` new (quiz): a reveal (highlight text or ✅) exists and comes after the first question text (?/؟).
+- `accents` new: quiz needs a timer bar, a reveal and a sticker; promo needs ≥ 2 marks/stickers.
+
+Saved runs re-scored (was 0.96 for everything):
+
+| set | Opus old | Opus moments | Haiku moments |
+|---|---|---|---|
+| talk | 1 | 1 | 1 |
+| mixed | **1** | 0.7 (ending, reveal, accents) | 0.78 (ending, accents) |
+| film | 1 | 0.89 (accents: picked promo, no marks) | 1 |
+| broll | 1 | 1 | 1 |
+
+It now matches the eye on the quiz set. Still blind to: blurry / weak moments (Haiku's film was weaker by eye but
+scores 1), and a spoiler inside the footage (an answer already highlighted in a game frame).
+
+**Next:** the real comparison again with the templates (needs user approval; ~12 plan requests ≈ 45k tokens).

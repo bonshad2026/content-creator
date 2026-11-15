@@ -18,7 +18,8 @@
     "token-budget": "node scripts/token-budget.mjs",
     "stickers": "node scripts/get-stickers.mjs",
     "music": "node scripts/get-music.mjs",
-    "demo": "node scripts/demo-server.mjs"
+    "demo": "node scripts/demo-server.mjs",
+    "rescore": "node scripts/rescore.mjs"
   },
   "dependencies": {
     "@tensorflow/tfjs": "^4.22.0",
