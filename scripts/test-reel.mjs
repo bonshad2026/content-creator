@@ -375,7 +375,9 @@ CASES["length-extend-30"] = {
 const arcane = path.resolve("data/test-out/arcane-plan2.json");
 if (fs.existsSync(arcane)) {
   const a = JSON.parse(fs.readFileSync(arcane, "utf8"));
-  CASES["arcane-soundtrack"] = { files: [["video", "arcane.mp4"]], transcript: a.transcript, spokenLang: "persian", plan: a.plan, expectAudio: { 1: "music_or_mixed" } };
+  CASES["arcane-soundtrack"] = { files: [["video", "arcane.mp4"]], transcript: a.transcript, spokenLang: "persian", plan: a.plan, expectAudio: { 1: "music_or_mixed" },
+    // P1-4: scene changes get soft joins (was 13 hard cuts of 15), busy footage behind the text gets a backing
+    expectSoft: true, expectBackdrop: true };
   // asked 60 s, the real model planned 55 s → code makes it 60
   CASES["length-arcane-60"] = { ...CASES["arcane-soundtrack"], length: 60 };
 }
@@ -473,7 +475,9 @@ for (const [name, c] of Object.entries(CASES)) {
     const durOk = Math.abs(real - o.duration) <= 1.0, loudOk = (!o.music && !o.narration) || (lufs >= -16 && lufs <= -13); // no voice and no music → only a few sound effects, loudness is not meaningful. Peaky mixes (many sound effects) land up to 2 dB under -14: the limiter takes the peaks, the gain is not raised again
     const audioFail = [await audioChecks(c, o, dir, out), c.length && Math.abs(real - c.length) > c.length * 0.1 && `length ${real.toFixed(1)} s, asked ${c.length}`,
       // hand-written plans must be valid as written (the schema would hide a broken test plan by repairing it)
-      !c.planIssuesOk && o.planIssues?.length && `plan: ${o.planIssues.join(" | ")}`].filter(Boolean).join("; ");
+      !c.planIssuesOk && o.planIssues?.length && `plan: ${o.planIssues.join(" | ")}`,
+      c.expectSoft && !o.transitions.some((n) => ["dip", "fade"].includes(n)) && "no soft transition",
+      c.expectBackdrop && !o.backdrops && "no text backing"].filter(Boolean).join("; ");
     results.push({
       case: name, ok: durOk && loudOk && !audioFail && r.usage.tokens === 0, sec: ((Date.now() - t0) / 1000).toFixed(0),
       dur: real.toFixed(1), lufs: lufs.toFixed(1), tokens: r.usage.tokens,

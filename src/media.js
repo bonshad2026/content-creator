@@ -434,6 +434,36 @@ function markEvent(m) {
 // SAFE ZONES (Reels / TikTok / Shorts): the platform's own UI covers the top ~110 px, the bottom ~280 px (caption, music)
 // and a ~110 px column on the right (like / comment / share). Every text and sticker stays inside this box.
 export const SAFE = { left: 60, right: W - 120, top: 120, bottom: H - 290 };
+// cinematic text sizes, and where each style sits: [top, bottom] of its text block in 0-1 of the frame height
+// (one line; Top grows downwards, the others upwards) — used to measure the footage behind it and to draw the band
+const MIN_SIZE = { Top: 58, Center: 64, Bottom: 56, Sub: 48 };
+export const TEXT_BAND = { Top: [0.13, 0.2], Center: [0.47, 0.53], Bottom: [0.6, 0.66], Sub: [0.67, 0.73] };
+// over this edge density (or this brightness) a thin white text needs a backing to stay readable. Measured: calm
+// shots 3-7 (talk, a quiet Arcane shot), busy ones 12-30 (the Arcane fight, stock clips, Tears of Steel)
+export const BACKDROP = { edges: 9, luma: 150 };
+
+/** A soft, blurred dark band across the frame behind one text (the text's own lines are estimated from its length). */
+function backdropEvent(t) {
+  const size = MIN_SIZE[t.style] || 56;
+  const [top, bottom] = TEXT_BAND[t.style] || TEXT_BAND.Top;
+  const perLine = Math.max(8, Math.floor((SAFE.right - SAFE.left) / (size * 0.5)));
+  const n = Math.max(1, Math.ceil(String(t.text || "").length / perLine)), lh = size * 1.35;
+  const y0 = t.style === "Top" ? top * H : bottom * H - n * lh, y1 = y0 + n * lh;
+  const a = Math.round(y0 - 40), b = Math.round(y1 + 40);
+  // ~70 % black, edges blurred away: reads as shade over the picture, not as a box
+  return `Dialogue: 0,${ts(t.start)},${ts(t.end)},Mark,,0,0,0,,{\\an7\\pos(0,0)\\bord0\\shad0\\1c&H000000&\\1a&H50&\\blur28\\fad(200,200)\\p1}m 0 ${a} l ${W} ${a} ${W} ${b} 0 ${b}{\\p0}`;
+}
+
+/** How busy / bright the footage is in a horizontal band (y0-y1, 0-1 of the height) at time t: {edges, luma}. */
+export async function bandStats(file, t, y0, y1, isImage = false) {
+  const band = `crop=iw:ih*${(y1 - y0).toFixed(3)}:0:ih*${y0.toFixed(3)},scale=360:-2,format=gray`;
+  const avg = async (extra) => {
+    const log = await ffmpegScan([...(isImage ? [] : ["-ss", Math.max(0, t).toFixed(2)]), "-i", file, "-frames:v", "1", "-vf", `${band}${extra},signalstats,metadata=print:key=lavfi.signalstats.YAVG`, "-f", "null", "-"], /YAVG/);
+    return +(log.match(/YAVG=([\d.]+)/)?.[1] ?? NaN);
+  };
+  return { luma: await avg(""), edges: await avg(",edgedetect=low=0.1:high=0.3") };
+}
+
 export function buildAss({ texts = [], subs = [], marks = [], accent, minimal = false }) {
   const acc = assColour(accent);
   YELLOW = `${acc.ass}&`;
@@ -443,22 +473,26 @@ export function buildAss({ texts = [], subs = [], marks = [], accent, minimal = 
   // highlight = dark text on an accent box (BorderStyle 3: the outline becomes an opaque box, Outline = padding)
   const box = (name, size, align, marginV) =>
     `Style: ${name},Vazirmatn,${size},${acc.light ? "&H00141414" : "&H00FFFFFF"},&H00FFFFFF,${acc.ass},&H00000000,900,0,0,0,100,100,0,0,3,16,0,${align},${SAFE.left},${W - SAFE.right},${marginV},-1`;
-  // minimal (cinematic): small, light-weight white text with a hair-thin outline, like film subtitles
+  // minimal (cinematic): clean white text with a thin outline, like film subtitles. Sized to read on a phone
+  // (the first version, 40-52 px at weight 300, was unreadable over the Arcane fight); busy footage behind a text
+  // also gets a soft dark band (see BACKDROP).
   const thin = (name, size, weight, align, marginV) =>
-    `Style: ${name},Vazirmatn,${size},&H00FFFFFF,&H00FFFFFF,&H50000000,&HA0000000,${weight},0,0,0,100,100,0,0,1,1.2,1.5,${align},${SAFE.left},${W - SAFE.right},${marginV},-1`;
+    `Style: ${name},Vazirmatn,${size},&H00FFFFFF,&H00FFFFFF,&H50000000,&HA0000000,${weight},0,0,0,100,100,0,0,1,1.8,2,${align},${SAFE.left},${W - SAFE.right},${marginV},-1`;
   const lines = [
     "[Script Info]", "ScriptType: v4.00+", `PlayResX: ${W}`, `PlayResY: ${H}`, "WrapStyle: 0", "ScaledBorderAndShadow: yes", "",
     "[V4+ Styles]",
     "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-    minimal ? thin("Top", 46, 300, 8, 170) : style("Top", 84, 900, "&H00FFFFFF", 6, 8, 150), // hook / headline, just under the platform's top bar
-    minimal ? thin("Center", 52, 300, 2, 600) : style("Center", 104, 900, acc.ass, 7, 2, 540), // punchline in the accent colour, middle of the screen
-    minimal ? thin("Bottom", 46, 300, 2, 430) : style("Bottom", 78, 900, "&H00FFFFFF", 6, 2, 420), // lower headline (above the subtitles, above the platform caption)
-    minimal ? thin("Sub", 40, 400, 2, 340) : style("Sub", 66, 900, "&H00FFFFFF", 6, 2, 330), // spoken subtitles (karaoke: current word in the accent colour)
+    minimal ? thin("Top", MIN_SIZE.Top, 500, 8, 170) : style("Top", 84, 900, "&H00FFFFFF", 6, 8, 150), // hook / headline, just under the platform's top bar
+    minimal ? thin("Center", MIN_SIZE.Center, 500, 2, 600) : style("Center", 104, 900, acc.ass, 7, 2, 540), // punchline in the accent colour, middle of the screen
+    minimal ? thin("Bottom", MIN_SIZE.Bottom, 500, 2, 430) : style("Bottom", 78, 900, "&H00FFFFFF", 6, 2, 420), // lower headline (above the subtitles, above the platform caption)
+    minimal ? thin("Sub", MIN_SIZE.Sub, 500, 2, 340) : style("Sub", 66, 900, "&H00FFFFFF", 6, 2, 330), // spoken subtitles (karaoke: current word in the accent colour)
     style("Cover", 104, 900, "&H00FFFFFF", 8, 5, 0),
     box("TopHL", 78, 8, 160), box("CenterHL", 90, 2, 550), box("BottomHL", 72, 2, 430),
     style("Mark", 20, 400, "&H00FFFFFF", 3, 7, 0),
     "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
   ];
+  // soft dark bands behind texts / subtitles over busy footage (minimal styles only; the bold styles have a thick outline)
+  if (minimal) for (const t of [...texts, ...subs.map((s) => ({ ...s, style: "Sub" }))]) if (t.backdrop) lines.push(backdropEvent(t));
   // never animate the cover (it's a single frame at t=0)
   for (const t of texts) {
     const text = assText(t.text);

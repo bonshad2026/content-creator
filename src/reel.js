@@ -2,7 +2,7 @@
 // The AI only sees a few small frames + the transcript (cheap); the heavy work is ffmpeg on this computer.
 import fs from "node:fs";
 import path from "node:path";
-import { probe, frameAt, extractAudio, detectSilences, sceneChanges, contactSheet, detectBars, sfxLibrary, ensureRisers, colorStats, autoCorrect, matchFilter, LOOKS, TRANSITIONS, TEXT_ANIMS, PHOTO_BOX, SAFE, STICKER_DIR, listStickers, leakFile, transitionLength, buildAss, renderReel, renderCover, jobDir, W, H } from "./media.js";
+import { probe, frameAt, extractAudio, detectSilences, sceneChanges, contactSheet, detectBars, sfxLibrary, ensureRisers, colorStats, autoCorrect, matchFilter, LOOKS, TRANSITIONS, TEXT_ANIMS, PHOTO_BOX, SAFE, STICKER_DIR, listStickers, leakFile, transitionLength, buildAss, renderReel, renderCover, jobDir, bandStats, TEXT_BAND, BACKDROP, W, H } from "./media.js";
 import { pickRecipe, recipeTransitions, recipeAnim, RECIPE_NAMES } from "./recipes.js";
 import { normalizePlan } from "./plan.js";
 import { transcribe, planReel } from "./ai.js";
@@ -365,6 +365,21 @@ export async function runReel(job, profileText, setStage, manual = null) {
     const continuous = a.inp.n === b.inp.n && Math.abs(a.start + a.dur - b.start) < 0.05;
     return continuous ? "cut" : wanted[k];
   });
+  // cinematic: mostly hard cuts, but the real scene changes (the biggest jumps in the source, or another input) get
+  // a soft dip / fade, about one join in four — a reel of only hard cuts felt flat (Arcane run 2: 13 of 15 joins)
+  if (recipe.minimal) {
+    const cand = shotStarts
+      .map((i, k) => {
+        const a = pieces[i - 1], b = pieces[i];
+        if (b.id === "outro" || joinName[k] !== "cut" || (a.inp.n === b.inp.n && Math.abs(a.start + a.dur - b.start) < 0.05)) return null;
+        return { k, gap: a.inp.n !== b.inp.n ? Infinity : Math.abs(b.start - (a.start + a.dur)) };
+      })
+      .filter(Boolean)
+      .sort((x, y) => y.gap - x.gap || x.k - y.k)
+      .slice(0, Math.max(shotStarts.length >= 3 ? 1 : 0, Math.round(shotStarts.length / 4)))
+      .sort((x, y) => x.k - y.k);
+    cand.forEach((c, j) => (joinName[c.k] = j % 2 ? "fade" : "dip"));
+  }
   const joinAt = (i) => shotStarts.indexOf(i); // piece index → join number (-1 if no shot change there)
 
   // 6) music: the AI's mood (or the recipe's when it didn't say; "none" = no music); cuts between shots snap to the beat
@@ -633,6 +648,31 @@ export async function runReel(job, profileText, setStage, manual = null) {
     if (p.inp.type === "video" && !framed.has(p.inp.n))
       p.bars = await detectBars(path.join(dir, p.inp.file), p.start + Math.max(0, (p.dur * (p.speed || 1)) / 2 - 0.75), p.inp.width, p.inp.height);
 
+  // 8b) cinematic text over busy or bright footage gets a soft dark band behind it. Measured on the frame as it will
+  //     look (same 9:16 layout, crop, bars and look as the render, no text), where the text sits, at its own moment:
+  //     a landscape clip's top text sits on the blurred fill, not on the picture. One small frame each, local ffmpeg.
+  if (recipe.minimal) {
+    fs.writeFileSync(path.join(dir, "bd.ass"), buildAss({}));
+    let backed = 0, k = 0;
+    for (const [list, style] of [[texts, null], [subs, "Sub"]])
+      for (const t of list) {
+        const at = Math.min(t.end - 0.05, t.start + 0.4);
+        const p = pieces.find((x) => at >= x.offset && at < x.offset + x.dur) || pieces[pieces.length - 1];
+        const band = TEXT_BAND[style || t.style];
+        if (!band || p.id === "outro") continue;
+        const inp = p.inp, st0 = inp.type === "image" ? 0 : p.start + (at - p.offset) * (p.speed || 1), out = `bd${k++}.jpg`;
+        const st = await renderCover(dir, {
+          file: inp.file, start: st0, isImage: inp.type === "image", look, auto: auto[inp.n], framed: framed.has(inp.n), bars: p.bars,
+          brighten: brighten.has(inp.n) && !auto[inp.n], crop: cropMode(inp) ? cropKeys(inp, st0, 0) : null, wide: wideMode(inp) ? cropKeys(inp, st0, 0) : null,
+        }, "bd.ass", out)
+          .then(() => bandStats(path.join(dir, out), 0, Math.max(0, band[0] - 0.03), Math.min(1, band[1] + 0.03), true))
+          .catch(() => ({}));
+        t.backdrop = st.edges > BACKDROP.edges || st.luma > BACKDROP.luma;
+        backed += t.backdrop ? 1 : 0;
+      }
+    if (backed) console.log(`cinematic text: ${backed} of ${texts.length + subs.length} get a backing (busy / bright footage)`);
+  }
+
   // 9) render (one at a time)
   setStage("rendering");
   await exclusive(async () => {
@@ -666,7 +706,7 @@ export async function runReel(job, profileText, setStage, manual = null) {
   });
 
   // tidy: keep inputs (for retry / revise), drop scratch files
-  for (const f of fs.readdirSync(dir)) if (/^(f\d+-\d+\.jpg|a\d+\.mp3|sheet\d+\.jpg|cell-\d+\.jpg)$/.test(f)) fs.rmSync(path.join(dir, f), { force: true });
+  for (const f of fs.readdirSync(dir)) if (/^(f\d+-\d+\.jpg|a\d+\.mp3|sheet\d+\.jpg|cell-\d+\.jpg|bd\d+\.jpg|bd\.ass)$/.test(f)) fs.rmSync(path.join(dir, f), { force: true });
 
   return {
     output: {
@@ -678,6 +718,7 @@ export async function runReel(job, profileText, setStage, manual = null) {
       smartCrop: Object.keys(tracks).some((n) => cropMode(byN[n])), colorFixed: Object.values(auto).filter(Boolean).length,
       audio: Object.fromEntries(videos.map((v) => [v.n, v.audioClass + (v.denoise ? "+denoise" : "")])),
       planIssues,
+      backdrops: [...texts, ...subs].filter((t) => t.backdrop).length,
       narration: transcript.length
         ? { language: spokenLang, text: subSource.map((s) => s.text).join(" "), original: transcript.map((s) => s.text).join(" ") }
         : null,

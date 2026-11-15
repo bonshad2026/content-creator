@@ -38,7 +38,7 @@ export const RECIPES = {
     maxStill: 2.5, music: "energetic", risers: true, onBeat: true,
   },
   cinematic: {
-    about: "cinematic short film: slow and moody, hard cuts, small thin subtitles, slow motion on the key moment, film grain; no stickers or effects",
+    about: "cinematic short film: slow and moody, mostly hard cuts with a soft dip at scene changes, clean film-style text, slow motion on the key moment, film grain; no stickers or effects",
     transitions: ["cut"], anims: ["fade"],
     maxStill: 4.5, music: "emotional", risers: false, calm: true, minimal: true, film: true,
   },

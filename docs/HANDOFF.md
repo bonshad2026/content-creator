@@ -38,7 +38,7 @@ upload → probe / scene detection / frames (or contact sheet if >60 s)
 | `scripts/test-reel.mjs` | 428 | Offline tests: hand-written plans, 0 tokens. |
 
 Commands: `npm start` (app), `npm run demo` (port 3010, demo AI, separate data), `npm run test:reel` (22 offline render
-cases), `npm run test:audio`, `test:ai`, `test:length`, `test:plan` (unit tests, seconds), `npm run token-budget` (planner request size, 0 tokens).
+cases), `npm run test:audio`, `test:ai`, `test:length`, `test:plan`, `test:style` (unit tests, seconds), `npm run token-budget` (planner request size, 0 tokens).
 Samples and the earlier report: `demo-output/expert/`.
 
 ## 3. What is verified and what is not
@@ -341,3 +341,20 @@ from `data/usage-log.jsonl` and decide on caching.
 **Not verified:** a real cheap-model plan through the schema (none exists yet; P1-5 will produce some).
 The per-field checks still left inside `runReel` (e.g. `Array.isArray(plan.marks)`) are now redundant; removing them
 belongs with the `runReel` split (P2-1).
+
+### 2026-11-15 — P1-4 cinematic style fixes (offline only, 0 tokens)
+- **Text:** cinematic styles 46/52/46/40 px at weight 300 → 58/64/56/48 px at 500, outline 1.2 → 1.8.
+- **Backing on busy footage:** for every cinematic text and subtitle, one frame is rendered exactly as the reel will
+  show it (same 9:16 layout, crop, bars, look; no text) at that text's moment, and the band where the text sits is
+  measured (`bandStats`: edge density + brightness). Over 9 edges or 150 luma → a soft blurred ~70 % black band
+  behind it (`backdropEvent`). Measuring the source frame instead was wrong: a landscape clip's top text sits on the
+  blurred fill, not on the picture. Thresholds from fixtures: calm 2.5–7, busy 12–40 (`npm run test:style`).
+- **Transitions:** cinematic was hard cuts only (and since P1-1 the model no longer picks transitions). Now about one
+  join in four — the biggest jumps in the source, or a change of input — gets a soft dip / fade, alternating;
+  continuous takes stay cuts. Arcane replay: 3 → 7 soft joins of 15, 1 of 4 texts backed.
+- `test-reel` asserts on the Arcane replay: at least one soft transition and one text backing (`output.backdrops`).
+
+**Not done:** "review each recipe once against one real reference reel" needs reference reels from the user
+(one per recipe: quiz, list, before-after, tutorial, story, hook, promo, cinematic, talk).
+**Not verified:** how the backing looks on a phone (checked only in frame grabs), and the thresholds on footage
+other than the fixtures.
