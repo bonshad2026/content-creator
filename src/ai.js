@@ -97,7 +97,7 @@ async function call(system, content, maxTokens, label = "") {
   let limit = maxTokens;
   for (let attempt = 1; attempt <= 2; attempt++) {
     const res = await client.chat.completions.create({
-      model: MODEL,
+      model: process.env.AI_MODEL || MODEL, // read per request: the model comparison switches it between runs
       max_tokens: limit,
       reasoning_effort: "low",
       messages: [{ role: "system", content: system }, { role: "user", content }],
@@ -105,7 +105,7 @@ async function call(system, content, maxTokens, label = "") {
     const u = res.usage || {};
     const finish = res.choices?.[0]?.finish_reason;
     const rec = {
-      at: new Date().toISOString(), label, model: MODEL, attempt, finish, limit,
+      at: new Date().toISOString(), label, model: process.env.AI_MODEL || MODEL, attempt, finish, limit,
       prompt: u.prompt_tokens ?? null, reply: u.completion_tokens ?? null, total: u.total_tokens ?? null,
       cached: u.prompt_tokens_details?.cached_tokens ?? u.cache_read_input_tokens ?? null,
       reasoning: u.completion_tokens_details?.reasoning_tokens ?? null, cost: u.cost ?? null,
@@ -273,7 +273,7 @@ function momentRules(moods) {
     `1. recipe: one of [${RECIPE_NAMES.map((r) => `${r} (${RECIPES[r].about})`).join("; ")}].\n` +
     "2. moments: the moment numbers to use, in the order they should play. Open with the most striking one. Keep the story clear; skip dull or repeated moments. With speech, keep the moments whose words matter, in order.\n" +
     "3. texts: 1-4 short on-screen lines (max 5 words, no emoji), each on a picked moment: {\"m\":3,\"text\":\"...\",\"pos\":\"top\"|\"center\"}. The first one, on the first moment, is the hook. Never repeat what is said aloud.\n" +
-    "4. Optional: slow = moment numbers to play in slow motion (a dramatic action, never speech); framed = input numbers that are screen recordings / app or game UI; emphasis = up to 3 speech line numbers (#) that are the key sentences.\n" +
+    "4. Optional: slow = moment numbers to play in slow motion (a dramatic action, never speech); framed = INPUT numbers (the \"Input 2\" kind, never moment numbers) that are screen recordings / app or game UI; emphasis = up to 3 speech line numbers (#) that are the key sentences.\n" +
     "5. If there is speech: subs = one string per speech line, same order, fixed for mis-heard words (e.g. 'گانلود' → 'دانلود'), in the creator's content language (translate if needed), no emoji. subtitles = true if the words matter.\n" +
     (moods.length ? `6. music: one of [${moods.join(", ")}] or "none".\n` : "") +
     `7. look: one of [${Object.keys(LOOKS).join(", ")}] ("natural" if it already looks good). coverFrom: {"m": the best-looking moment}, cover: max 5 words.\n` +

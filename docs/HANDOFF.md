@@ -388,3 +388,44 @@ Switch: **`AI_PLAN_MODE=moments`** (default is still the old seconds-based promp
   (moments mode), judged by the P2-2 rubric. Needs real runs — only when the user approves. Until then the old mode
   stays the default.
 **Not verified:** whether a model actually answers well from labelled sheets (only hand-written moment plans so far).
+
+### 2026-11-15 — P1-5 measurement: first REAL comparison (user-approved, 12 plan requests + 1 trial)
+`node --env-file=.env scripts/compare-models.mjs [set] [config]`. Known transcripts (no Whisper); 4 input sets ×
+Opus old prompt / Opus moments mode / Haiku 5.5 moments mode. Reels, sheets and plans: `data/test-out/compare/`
+(local); the 12 raw plans are fixtures in `scripts/fixtures/real-plans/`. `AI_MODEL` is now read per request.
+
+**Real tokens (averages of 4 sets)** — prompt / reply / total:
+| Config | Prompt | Reply | Total | Rubric |
+|---|---|---|---|---|
+| Opus, old prompt | 3,910 | 1,251 | 5,161 | 0.96 |
+| Opus, moments mode | 2,701 | 595 | 3,296 (−36 %) | 0.96 |
+| Haiku, moments mode | 2,701 | 1,105 (incl. ~550 reasoning) | 3,806 | 0.96 |
+
+- Every request finished in one go (no cut-off). Opus reports **0 cached tokens and no cost**; Haiku reported
+  cached tokens once (1,181 of 3,323) and a cost of ~$0.0005 per plan. → Caching exists on GapGPT for some models;
+  Opus price is still unknown.
+- The dry-run estimates are ~25–30 % low (mixed set: estimate 1,930, real 2,487).
+
+**The automatic rubric does not separate the configs** (all 0.96; the only failure, `cover` on b-roll, is a rubric
+flaw: a 15 s reel cannot use 3 of 5 slices of a 47 s clip). Judged by eye from the sheets:
+- **Talking head:** all three good. Haiku: hook at 0 s, karaoke + jump cuts, one extra on-screen line, sound caption,
+  no correct subtitle words changed. Comparable to Opus.
+- **Mixed quiz (talk + game + photo): Opus old prompt clearly best** — a real quiz arc with answer reveal, ✅ / 🤔
+  stickers and "جوابو کامنت کن". Moments mode has **no marks/stickers at all** (not in its rules), so both moments
+  runs lose that punch; Opus-moments ran long (27 s) and ended on an empty end screen; Haiku showed the second
+  question with its answer already highlighted (spoils the reveal).
+- **Arcane film:** Opus old ≈ Opus moments (varied, whole fight covered); Haiku weaker (long blurry motion moments,
+  fewer faces).
+- Haiku once put moment numbers in `framed` (input numbers); the schema dropped them; prompt wording fixed.
+
+**Verdict:** moments mode keeps Opus quality at −36 % tokens on talk and film, but loses the quiz/promo accents.
+Haiku is good enough for talking heads, not yet for quiz or film. **Default stays the old prompt.**
+**Next (in this order):**
+1. Marks in moments mode: stickers / answer-reveal / confetti attached to a moment number (`{"m":5,"type":"sticker","name":"check"}`),
+   positions from the code (face / safe zone), not coordinates from the model.
+2. Recipe templates for quiz / list / before-after: slot structure (question → wait → answer reveal → next … → CTA),
+   with the answer moment found by the model by number and the timing by code. A moment's "spoiler" (answer visible)
+   should be detectable from the sheet order: question moments before answer moments.
+3. Fix the `cover` rubric (relative to reel length) and add rubric checks for what the eye found: ends on an
+   empty screen, answer shown before the question, sticker/accent count for quiz/promo.
+4. Then run the comparison again (needs user approval).

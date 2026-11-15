@@ -302,6 +302,7 @@ export async function runReel(job, profileText, setStage, manual = null) {
     : await planReel(profileText, inputs, transcript, job.brief, spokenLang, moods, askedLength, moments);
   usage.tokens += u.tokens;
   usage.cost += u.cost;
+  usage.requests = [...(usage.requests || []), ...(u.requests || [])]; // per-request split (prompt / reply / cached)
   // every plan (model, revise, hand-written, demo) goes through the one schema: repaired, never trusted (src/plan.js)
   // a moment-picking answer becomes a normal plan (seconds) here; from now on there is only one kind of plan
   const fromMoments = moments && Array.isArray(rawPlan?.moments) ? momentsToPlan(rawPlan, moments) : null;
@@ -756,6 +757,6 @@ export async function runReel(job, profileText, setStage, manual = null) {
     coverImg: url("cover.jpg"),
     usage,
     // kept on the job so "revise" can change the plan without new frames / speech-to-text
-    plan, transcript: transcript.map(({ n, start, end, text, words }) => ({ n, start, end, text, words })), spokenLang,
+    plan, rawPlan, transcript: transcript.map(({ n, start, end, text, words }) => ({ n, start, end, text, words })), spokenLang,
   };
 }
