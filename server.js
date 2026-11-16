@@ -2,7 +2,7 @@ import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
 import express from "express";
-import { jobDir } from "./src/media.js";
+import { jobDir, extractAudio } from "./src/media.js";
 import { getDb, save, flushSync, newId, saveFrames, deleteFrames, uploadDir } from "./src/store.js";
 import { sendCode, verifyCode, requireUser, logout, smsEnabled } from "./src/auth.js";
 import { demoMode, MODEL, transcribe } from "./src/ai.js";
@@ -149,18 +149,22 @@ app.post("/api/voice", requireUser, express.raw({ type: "audio/*", limit: VOICE_
   const v = req.user.voice?.day === day ? req.user.voice : (req.user.voice = { day, n: 0 });
   if (!isAdmin(req.user) && v.n >= VOICE_PER_DAY) return res.status(429).json({ error: "امروز به اندازه‌ی کافی صدا فرستادی. بقیه‌ش رو تایپ کن." });
   if (demoMode) { v.n++; save(); return res.json({ text: "(دمو) این متنِ صدای توئه؛ با کلید واقعی، حرفت اینجا نوشته می‌شه." }); }
-  const file = path.join(os.tmpdir(), `voice-${newId(8)}.${ext}`);
+  const file = path.join(os.tmpdir(), `voice-${newId(8)}.${ext}`), mp3 = file + ".mp3";
   fs.writeFileSync(file, req.body);
   try {
-    const r = await transcribe(file, "fa");
+    // the phone's webm has no duration in its header and the API refuses it ("webm duration parsing…") →
+    // re-encode to a small mono mp3 first (same as the reels' own speech)
+    try { await extractAudio(file, mp3, 180); }
+    catch { return res.status(400).json({ error: "این صدا خونده نشد. دوباره ضبط کن." }); }
+    const r = await transcribe(mp3, "fa");
     v.n++;
     req.user.usage ??= { tokens: 0, cost: 0 };
     req.user.usage.cost = (req.user.usage.cost || 0) + (r.cost || 0);
     save();
-    const text = r.segments.map((x) => x.text).join(" ").replace(/s+/g, " ").trim();
+    const text = r.segments.map((x) => x.text).join(" ").replace(/\s+/g, " ").trim();
     if (!text) return res.status(400).json({ error: "صدایی شنیده نشد. نزدیک‌تر به گوشی حرف بزن." });
     res.json({ text });
-  } finally { fs.rmSync(file, { force: true }); }
+  } finally { fs.rmSync(file, { force: true }); fs.rmSync(mp3, { force: true }); }
 }));
 
 // ---------- feedback (👍 / 👎 + note) and "revise" ----------
