@@ -522,3 +522,13 @@ and assigns plans; the app must run under a `BASE_URL` (later several apps in on
 - Existing users in the real `data/db.json` have no plan → they fall under the default plan (`none`) until assigned.
 - Tests: `npm run test:plans` (19). Not done yet for a public beta: parallel-render limit, upload length limit,
   old-job cleanup, hosting (Liara or own server), the default model for the beta, real SMS.
+
+## Resumable uploads (2026-11-16)
+- A colleague's large video failed to upload on a slow connection. Videos now go in 4 MB chunks (`src/uploads.js`,
+  `POST/GET/PUT /api/uploads`, header `Upload-Offset`). After a drop the phone asks how much arrived and continues
+  from there (bytes of a cut chunk are kept). Up to 20 failures in a row, backoff up to 10 s.
+- A file is known per user by a fingerprint (size + lastModified + hash of first/middle/last 1 MB). Picking the same
+  file again (retry, reload, failed reel) skips what is already there; a finished file is not sent again at all.
+- `POST /api/reels` takes `files[].upload`; the file is hard-linked into the job folder (no copy). Kept 3 days after
+  last use in `DATA_DIR/parts`, then swept. Upload start is refused if the plan allows no reel.
+- Tests: `npm run test:uploads` (14). Checked in the browser: drop at 39% → resumed from 4.8 MB; same file again → 0 bytes, 0.26 s.

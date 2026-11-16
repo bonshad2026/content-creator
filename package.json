@@ -20,7 +20,8 @@
     "music": "node scripts/get-music.mjs",
     "demo": "node scripts/demo-server.mjs",
     "rescore": "node scripts/rescore.mjs",
-    "test:plans": "node scripts/test-plans.mjs"
+    "test:plans": "node scripts/test-plans.mjs",
+    "test:uploads": "node scripts/test-uploads.mjs"
   },
   "dependencies": {
     "@tensorflow/tfjs": "^4.22.0",

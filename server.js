@@ -7,6 +7,7 @@ import { getDb, save, flushSync, newId, saveFrames, deleteFrames, uploadDir } fr
 import { sendCode, verifyCode, requireUser, logout, smsEnabled } from "./src/auth.js";
 import { demoMode, MODEL } from "./src/ai.js";
 import { enqueue } from "./src/jobs.js";
+import { uploadRoutes, takeUpload, MAX_UPLOAD } from "./src/uploads.js";
 import { ensurePlans, isAdmin, planView, quotaError, cleanPlan, usageOf, planOf } from "./src/plans.js";
 
 // BASE_URL: the path the app is served under, e.g. "/creator" (or a full URL "https://x.com/creator": only its path
@@ -197,8 +198,11 @@ app.post("/api/jobs", requireUser, wrap(async (req, res) => {
   res.json(jobView(job));
 }));
 
-// ---------- video reels: create → upload each file (raw stream) → start ----------
-const MAX_UPLOAD = 400 * 1024 * 1024; // per file
+// ---------- resumable uploads (src/uploads.js) ----------
+uploadRoutes(app, { db, save, requireUser, wrap, canUpload: (user) => quota(user, "reel") });
+
+// ---------- video reels: upload each file (resumable) → create with the upload ids → start ----------
+// (the older "create → PUT each file" flow still works)
 app.post("/api/reels", requireUser, wrap(async (req, res) => {
   quota(req.user, "reel");
   if (!req.user.style) return res.status(400).json({ error: "اول سبکت را مشخص کن." });
@@ -212,7 +216,10 @@ app.post("/api/reels", requireUser, wrap(async (req, res) => {
     inputs: files.map((f, i) => ({ n: i + 1, type: f.type === "image" ? "image" : "video", file: `in${i + 1}.${f.type === "image" ? "jpg" : "mp4"}`, uploaded: false })),
     brand: brandSnapshot(req.user), status: "uploading", stage: null, output: null, error: null, usage: { tokens: 0, cost: 0 }, createdAt: Date.now(),
   };
-  jobDir(id);
+  const dir = jobDir(id);
+  try {
+    files.forEach((f, i) => { if (f.upload) { takeUpload(db, req.user, String(f.upload), path.join(dir, job.inputs[i].file)); job.inputs[i].uploaded = true; } });
+  } catch (e) { fs.rmSync(dir, { recursive: true, force: true }); throw e; }
   db.jobs.push(job);
   save();
   res.json(jobView(job));

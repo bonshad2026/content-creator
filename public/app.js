@@ -314,40 +314,66 @@ function bindSampleDelete(after) {
 const VIDEO_THUMB = "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="#333"/><path d="M4 3l3 2-3 2z" fill="#fff"/></svg>');
 const dataUrlToBlob = (u) => fetch(u).then((r) => r.blob());
 
-// upload with progress (fetch has no upload progress → XHR)
-// If no bytes move for 25s (screen locked, app in background, Wi-Fi drop) the upload is aborted and retried.
-const STALL_MS = 25000;
-function uploadOnce(url, blob, onProgress) {
+// Resumable upload: the file goes in chunks; after a drop it goes on from what the server already has (never from
+// zero). The server knows a file by a fingerprint (size + date + a hash of a few sampled pieces), so picking the same
+// file again (retry, reload, a failed reel) skips what was sent before, or the whole file.
+const CHUNK = 4 * 1024 * 1024;
+const STALL_MS = 25000; // no bytes moving for 25s (screen locked, app in background, Wi-Fi drop) → abort and go on
+async function fingerprint(blob) {
+  const S1 = 1024 * 1024, n = blob.size;
+  const parts = n <= 3 * S1 ? [blob] : [blob.slice(0, S1), blob.slice(Math.floor(n / 2), Math.floor(n / 2) + S1), blob.slice(n - S1)];
+  let h1 = 0xdeadbeef ^ n, h2 = 0x41c6ce57 ^ (blob.lastModified || 0);
+  for (const p of parts) {
+    const b = new Uint8Array(await p.arrayBuffer());
+    for (let i = 0; i < b.length; i++) { h1 = Math.imul(h1 ^ b[i], 2654435761); h2 = Math.imul(h2 ^ b[i], 1597334677); }
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return [h1 >>> 0, h2 >>> 0, n, blob.lastModified || 0].map((v) => v.toString(36)).join("");
+}
+function putChunk(id, offset, blob, onProgress) {
   return new Promise((ok, bad) => {
     const x = new XMLHttpRequest();
     let watchdog;
     const arm = () => { clearTimeout(watchdog); watchdog = setTimeout(() => { x.abort(); bad(Object.assign(new Error("stalled"), { retry: true })); }, STALL_MS); };
-    x.open("PUT", rel(url));
+    x.open("PUT", rel("/api/uploads/" + id));
     x.setRequestHeader("Authorization", "Bearer " + S.token);
     x.setRequestHeader("Content-Type", "application/octet-stream");
-    x.upload.onprogress = (e) => { arm(); e.lengthComputable && onProgress(e.loaded); };
+    x.setRequestHeader("Upload-Offset", String(offset));
+    x.upload.onprogress = (e) => { arm(); onProgress(e.loaded); };
     x.onload = () => {
       clearTimeout(watchdog);
-      if (x.status < 300) return ok();
-      let msg = "آپلود ناموفق بود";
-      try { msg = JSON.parse(x.responseText || "{}").error || msg; } catch {}
-      bad(Object.assign(new Error(msg), { retry: x.status >= 500 }));
+      let data = {};
+      try { data = JSON.parse(x.responseText || "{}"); } catch {}
+      if (x.status < 300 || x.status === 409) return ok(data); // 409: out of step → go on from data.received
+      bad(Object.assign(new Error(data.error || "آپلود ناموفق بود"), { retry: x.status >= 500 }));
     };
     x.onerror = () => { clearTimeout(watchdog); bad(Object.assign(new Error("network"), { retry: true })); };
     arm();
     x.send(blob);
   });
 }
-async function uploadFile(url, blob, onProgress, onRetry) {
-  for (let attempt = 1; ; attempt++) {
-    try { return await uploadOnce(url, blob, onProgress); }
-    catch (e) {
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/** → upload id. onProgress(bytes of this file on the server so far), onRetry(n) while the connection is down. */
+async function uploadResumable(blob, onProgress, onRetry) {
+  const key = await fingerprint(blob);
+  let u = await api("/api/uploads", { method: "POST", body: { key, size: blob.size } });
+  onProgress(u.received);
+  for (let fails = 0; !u.done; ) {
+    const from = u.received;
+    try {
+      u = await putChunk(u.id, from, blob.slice(from, Math.min(from + CHUNK, blob.size)), (l) => onProgress(from + l));
+      if (u.received > from) fails = 0;
+      onProgress(u.received);
+    } catch (e) {
       if (!e.retry) throw e;
-      if (attempt >= 3) throw new Error("آپلود قطع شد. اینترنت یا وای‌فای رو چک کن، صفحه رو باز نگه دار و دوباره بزن.");
-      onRetry?.(attempt);
-      await new Promise((r) => setTimeout(r, 1500));
+      if (++fails > 20) throw new Error("آپلود قطع شد. اینترنت رو چک کن و دوباره بزن؛ از همون‌جا که مونده ادامه می‌ده.");
+      onRetry?.(fails);
+      await sleep(Math.min(1500 * fails, 10000));
+      u = await api("/api/uploads/" + u.id).catch(() => u); // how much really arrived
     }
   }
+  return u.id;
 }
 
 views.create = () => {
@@ -420,16 +446,21 @@ views.create = () => {
       btn.innerHTML = '<span class="spinner"></span> آماده‌سازی…';
       const blobs = await Promise.all(P.map(async (p) => (p.kind === "video" ? p.file : dataUrlToBlob((await imageFrames(p.file, 1280))[0]))));
       const totalBytes = blobs.reduce((a, b) => a + b.size, 0);
-      job = await api("/api/reels", { method: "POST", body: { brief: S.brief || "", length: S.len === "auto" ? null : +S.len, files: P.map((p) => ({ type: p.kind })) } });
-      let done = 0;
+      let done = 0, pct = 0, sent = 0;
+      const ids = [];
+      // "۴٫۸ از ۱۲٫۳ مگابایت" (under 10 MB: one decimal; above: whole numbers)
+      const mb = (b) => { const m = b / 1048576; return fa(m < 10 ? m.toFixed(1) : Math.round(m)).replace(".", "٫"); };
+      // two lines on the button: the state, then the sizes
+      const show = (line) => (btn.innerHTML = `<span class="spinner"></span><span style="display:flex;flex-direction:column;line-height:1.35;margin-inline-start:8px">${line}<small style="opacity:.8;font-weight:400">${mb(sent)} از ${mb(totalBytes)} مگابایت${blobs.length > 1 ? ` · ${fa(blobs.length)} فایل` : ""}</small></span>`);
       for (let i = 0; i < blobs.length; i++) {
-        await uploadFile(
-          `/api/reels/${job.id}/files/${i + 1}`, blobs[i],
-          (loaded) => { btn.innerHTML = `<span class="spinner"></span> آپلود ${fa(Math.round(((done + loaded) / totalBytes) * 100))}٪ — صفحه رو باز نگه دار`; },
-          () => { btn.innerHTML = `<span class="spinner"></span> اتصال قطع شد، دوباره امتحان می‌کنم…`; }
-        );
+        ids.push(await uploadResumable(
+          blobs[i],
+          (got) => { sent = done + got; pct = Math.floor((sent / totalBytes) * 100); show(`آپلود ${fa(pct)}٪ — صفحه رو باز نگه دار`); },
+          () => show(`اتصال قطع شد (${fa(pct)}٪)، ادامه می‌دم…`)
+        ));
         done += blobs[i].size;
       }
+      job = await api("/api/reels", { method: "POST", body: { brief: S.brief || "", length: S.len === "auto" ? null : +S.len, files: P.map((p, i) => ({ type: p.kind, upload: ids[i] })) } });
       const j = await api(`/api/reels/${job.id}/start`, { method: "POST" });
       S.jobs.unshift(j); S.seen[j.id] = j.status;
       S.pick = []; S.brief = ""; uploading = false;
