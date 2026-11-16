@@ -79,7 +79,7 @@ export function repairJson(text) {
 }
 
 // Every real request is logged here (one JSON line each): what the tokens went to, and whether caching works.
-const USAGE_LOG = process.env.USAGE_LOG || "data/usage-log.jsonl";
+const USAGE_LOG = process.env.USAGE_LOG || `${process.env.DATA_DIR || "data"}/usage-log.jsonl`; // inside DATA_DIR (the docker volume)
 
 /**
  * One request. max_tokens is only a ceiling (you pay for what is written), so it is set high enough that a normal
@@ -295,7 +295,7 @@ async function mockMomentPlan(moments) {
   // demo: the best-scoring moments in time order, a hook on the first
   const pick = [...moments].sort((a, b) => b.score - a.score).slice(0, 4).sort((a, b) => a.n - b.n || a.s - b.s).map((m) => m.id);
   return {
-    data: { recipe: "promo", moments: pick, texts: [{ m: pick[0], text: "(دمو) اینو ببینید", pos: "top" }], look: "vivid", coverFrom: { m: pick[0] }, cover: "نمونه دمو", cta: "فالو کن", hooks: ["اینو ببینید"], caption: "(نمونه‌ی دمو) کپشن ریل", hashtags: ["#دمو"], tips: [] },
+    data: { recipe: "promo", moments: pick, texts: [{ m: pick[0], text: "(دمو) اینو ببینید", pos: "top" }], look: "vivid", coverFrom: { m: pick[0] }, cover: "نمونه دمو", cta: "فالو کن", hooks: ["اینو ببینید"], caption: "(نمونه‌ی دمو) کپشن ریلز", hashtags: ["#دمو"], tips: [] },
     usage: { tokens: 0, cost: 0 },
   };
 }
@@ -366,7 +366,7 @@ async function mockReelPlan(inputs) {
       recipe: "promo", clips, texts: [{ t: 0, d: 2.2, text: "(دمو) اینو ببینید", pos: "top", anim: "words" }], subtitles: true,
       marks: [{ type: "sticker", name: "eyes", t: 0.3, d: 2, x: 0.8, y: 0.3, s: 0.22 }],
       transitions: [], cta: "فالو کن", look: "vivid",
-      coverFrom: { n: v.n, s: 0 }, cover: "نمونه دمو", hooks: ["اینو ببینید"], caption: "(نمونه‌ی دمو) کپشن ریل", hashtags: ["#دمو"], tips: [],
+      coverFrom: { n: v.n, s: 0 }, cover: "نمونه دمو", hooks: ["اینو ببینید"], caption: "(نمونه‌ی دمو) کپشن ریلز", hashtags: ["#دمو"], tips: [],
     },
     usage: { tokens: 0, cost: 0 },
   };

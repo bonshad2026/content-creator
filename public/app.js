@@ -193,13 +193,18 @@ views.name = () => {
 };
 
 views.home = () => {
-  const running = S.jobs.filter((j) => j.status === "queued" || j.status === "running");
+  const running = S.jobs.filter((j) => j.status === "queued" || j.status === "running" || j.status === "uploading");
   const recent = S.jobs.filter((j) => j.status === "done" || j.status === "error").slice(0, 3);
+  // 1) what is being made now (its own card, so it is never mixed up with "make a new one")
+  // 2) the one big button: a new reels (or the saved draft)  3) the latest finished ones
   $app.innerHTML = `
     <div class="hello"><h1>سلام ${esc(S.me.name)} 👋</h1><p class="muted">${S.me.style ? "عکس یا ویدیو بده، بقیه‌ش با من." : "اول چندتا سؤال کوتاه می‌پرسم تا سبکت رو بشناسم."}</p></div>
     ${planBlocked() ? `<div class="card notice">حسابت هنوز فعال نشده. وقتی مدیر برات پلن فعال کنه، می‌تونی محتوا بسازی.</div>` : ""}
-    <div class="big-wrap"><button class="big" id="go"><span>✦</span>تولید محتوا</button></div>
-    ${running.length ? `<div class="section-title">در حال تولید <span class="spinner dark"></span></div>${running.map(jobRow).join("")}` : ""}
+    ${running.length ? `<div class="card making"><div class="making-title"><span class="spinner dark"></span> در حال ساخت (${fa(running.length)})</div>
+      ${running.map(jobRow).join("")}
+      <p class="muted hint" style="margin:8px 0 0">لازم نیست اینجا بمونی؛ آماده شد خبرت می‌کنم.</p></div>` : ""}
+    <div class="big-wrap${running.length ? " compact" : ""}"><button class="big" id="go"><span>${hasDraft() ? "📝" : "＋"}</span>${hasDraft() ? "ادامه‌ی پیش‌نویس" : "ساخت ریلز جدید"}</button></div>
+    ${hasDraft() ? `<p class="muted center" style="margin-top:-6px">پیش‌نویس ذخیره‌شده: ${S.pick.length ? `${fa(S.pick.length)} فایل` : "فقط متن"}</p>` : ""}
     ${recent.length ? `<div class="section-title">آخرین‌ها <a class="link" href="#/history">همه</a></div>${recent.map(jobRow).join("")}` : ""}`;
   document.getElementById("go").onclick = () => go(S.me.style ? "#/create" : "#/wizard");
 };
@@ -208,7 +213,7 @@ const planBlocked = () => !S.me.admin && S.me.plan && S.me.plan.reelsPerDay === 
 const limitText = (used, max) => (max == null ? `${fa(used)} (نامحدود)` : `${fa(used)} از ${fa(max)}`);
 const faDate = (t) => new Date(t).toLocaleDateString("fa-IR");
 
-const KIND = { video: "ویدیو", carousel: "پست اسلایدی", image: "عکس", reel: "ریل ویدیویی" };
+const KIND = { video: "ویدیو", carousel: "پست اسلایدی", image: "عکس", reel: "ریلز ویدیویی" };
 const STAGE = { analyzing: "بررسی ویدیو…", writing: "نوشتن و برنامه‌ی ادیت…", rendering: "ساخت ویدیو…" };
 const statusLabel = (j) => j.status === "running" && STAGE[j.stage] ? STAGE[j.stage] : { uploading: "در حال آپلود", queued: "در صف", running: "در حال تولید…", done: "آماده", error: "خطا" }[j.status];
 const thumbOf = (j) => rel(j.coverImg || j.thumb || j.frames?.[0]) || VIDEO_THUMB;
@@ -216,7 +221,8 @@ const thumbOf = (j) => rel(j.coverImg || j.thumb || j.frames?.[0]) || VIDEO_THUM
 function jobRow(j) {
   const label = statusLabel(j);
   const first = j.output?.caption?.split("\n").find(Boolean) || j.brief || KIND[j.kind];
-  return `<a class="job" href="#/job/${j.id}"><img src="${thumbOf(j)}" loading="lazy"><div class="info"><div class="line1">${esc(first)}</div><div class="line2">${ago(j.createdAt)}</div></div><span class="status ${j.status}">${label}</span></a>`;
+  const busy = j.status === "queued" || j.status === "running" || j.status === "uploading";
+  return `<a class="job${busy ? " busy" : ""}" href="#/job/${j.id}"><img src="${thumbOf(j)}" loading="lazy"><div class="info"><div class="line1">${esc(first)}</div><div class="line2">${busy ? label + " · " : ""}${ago(j.createdAt)}</div>${busy ? '<div class="indet"><i></i></div>' : ""}</div>${busy ? "" : `<span class="status ${j.status}">${label}</span>`}</a>`;
 }
 
 views.wizard = (params) => {
@@ -311,6 +317,61 @@ function bindSampleDelete(after) {
   }));
 }
 
+// ---------- voice input: a mic button that records, sends the audio, and adds the text to a textarea ----------
+// Needs a secure page (HTTPS or localhost) for the microphone; elsewhere the button is not shown.
+const canVoice = () => !!(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
+const VOICE_MAX_S = 120;
+const MIC_SVG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v4"/></svg>';
+const STOP_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="3"/></svg>';
+const micBtn = (id) => (canVoice() ? `<button type="button" class="mic" data-mic="${id}" title="بگو (ضبط صدا)" aria-label="ضبط صدا">${MIC_SVG}</button>` : "");
+/** A textarea with the mic inside it, at its end (like chat apps). */
+const voiceArea = (id, attrs, value = "") => `<div class="ta-wrap${canVoice() ? " has-mic" : ""}"><textarea id="${id}" ${attrs}>${esc(value)}</textarea>${micBtn(id)}</div>`;
+/** Wire every mic button on the page. onText(textarea) runs after text was added (e.g. save the draft). */
+function wireMics(onText = () => {}) {
+  document.querySelectorAll("[data-mic]").forEach((btn) => {
+    const ta = document.getElementById(btn.dataset.mic);
+    let rec = null, timer = null, started = 0;
+    const ph = ta.placeholder;
+    const idle = () => { ta.placeholder = ph; btn.classList.remove("rec", "busy"); btn.disabled = false; btn.innerHTML = MIC_SVG; };
+    const stop = () => { clearInterval(timer); if (rec?.state === "recording") rec.stop(); };
+    btn.onclick = async () => {
+      if (rec?.state === "recording") return stop();
+      let stream;
+      try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+      catch { return toast("اجازه‌ی میکروفون داده نشد. از تنظیمات مرورگر اجازه بده یا تایپ کن.", { type: "err", ms: 6000 }); }
+      const type = ["audio/webm", "audio/ogg", "audio/mp4"].find((t) => MediaRecorder.isTypeSupported?.(t)) || "";
+      rec = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
+      const parts = [];
+      rec.ondataavailable = (e) => e.data.size && parts.push(e.data);
+      rec.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(parts, { type: (rec.mimeType || type || "audio/webm").split(";")[0] });
+        if (Date.now() - started < 800) return idle(); // a tap, not a recording
+        btn.classList.replace("rec", "busy"); btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>'; ta.placeholder = "دارم صدات رو به متن تبدیل می‌کنم…";
+        try {
+          const res = await fetch(rel("/api/voice"), { method: "POST", headers: { "Content-Type": blob.type, Authorization: "Bearer " + S.token }, body: blob });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || "تبدیل صدا ناموفق بود");
+          ta.value = (ta.value.trim() ? ta.value.trim() + " " : "") + data.text;
+          ta.dispatchEvent(new Event("input"));
+          onText(ta);
+        } catch (e) { toast(e.message, { type: "err" }); }
+        idle();
+      };
+      rec.start();
+      started = Date.now();
+      btn.classList.add("rec");
+      const tick = () => {
+        const sec = Math.floor((Date.now() - started) / 1000);
+        btn.innerHTML = `${STOP_SVG}<span dir="ltr">${fa(Math.floor(sec / 60))}:${fa(String(sec % 60).padStart(2, "0"))}</span>`;
+        if (sec >= VOICE_MAX_S) stop();
+      };
+      tick();
+      timer = setInterval(tick, 500);
+    };
+  });
+}
+
 const VIDEO_THUMB = "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="#333"/><path d="M4 3l3 2-3 2z" fill="#fff"/></svg>');
 const dataUrlToBlob = (u) => fetch(u).then((r) => r.blob());
 
@@ -331,9 +392,20 @@ async function fingerprint(blob) {
   h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
   return [h1 >>> 0, h2 >>> 0, n, blob.lastModified || 0].map((v) => v.toString(36)).join("");
 }
-function putChunk(id, offset, blob, onProgress) {
+// cancel: ctl.cancel() stops the chunk in flight and any wait; uploadResumable then throws {cancelled: true}.
+// What already reached the server is kept, so picking the same file later goes on from there.
+const uploadCtl = () => {
+  const c = { cancelled: false, xhr: null, wake: null, fail: null };
+  c.cancel = () => { c.cancelled = true; c.xhr?.abort(); c.fail?.(CANCELLED()); c.wake?.(); };
+  return c;
+};
+const CANCELLED = () => Object.assign(new Error("cancelled"), { cancelled: true });
+// the phone lost access to the picked file (cloud file not on the phone yet, app long in the background, file moved)
+const isUnreadable = (e) => e?.name === "NotReadableError" || e?.name === "NotFoundError" || /could not be read|not readable/i.test(e?.message || "");
+function putChunk(id, offset, blob, onProgress, ctl) {
   return new Promise((ok, bad) => {
     const x = new XMLHttpRequest();
+    if (ctl) { ctl.xhr = x; ctl.fail = (e) => { clearTimeout(watchdog); bad(e); }; }
     let watchdog;
     const arm = () => { clearTimeout(watchdog); watchdog = setTimeout(() => { x.abort(); bad(Object.assign(new Error("stalled"), { retry: true })); }, STALL_MS); };
     x.open("PUT", rel("/api/uploads/" + id));
@@ -353,28 +425,90 @@ function putChunk(id, offset, blob, onProgress) {
     x.send(blob);
   });
 }
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms, ctl) => new Promise((r) => { const t = setTimeout(r, ms); if (ctl) ctl.wake = () => { clearTimeout(t); r(); }; });
 /** → upload id. onProgress(bytes of this file on the server so far), onRetry(n) while the connection is down. */
-async function uploadResumable(blob, onProgress, onRetry) {
+async function uploadResumable(blob, onProgress, onRetry, ctl = uploadCtl()) {
+  const stop = () => { if (ctl.cancelled) throw CANCELLED(); };
   const key = await fingerprint(blob);
+  stop();
   let u = await api("/api/uploads", { method: "POST", body: { key, size: blob.size } });
+  stop();
   onProgress(u.received);
   for (let fails = 0; !u.done; ) {
     const from = u.received;
     try {
-      u = await putChunk(u.id, from, blob.slice(from, Math.min(from + CHUNK, blob.size)), (l) => onProgress(from + l));
+      u = await putChunk(u.id, from, blob.slice(from, Math.min(from + CHUNK, blob.size)), (l) => onProgress(from + l), ctl);
+      stop();
       if (u.received > from) fails = 0;
       onProgress(u.received);
     } catch (e) {
+      stop();
       if (!e.retry) throw e;
+      await blob.slice(from, from + 1).arrayBuffer(); // a send error can also be the phone losing the file → throws NotReadableError
       if (++fails > 20) throw new Error("آپلود قطع شد. اینترنت رو چک کن و دوباره بزن؛ از همون‌جا که مونده ادامه می‌ده.");
       onRetry?.(fails);
-      await sleep(Math.min(1500 * fails, 10000));
+      await sleep(Math.min(1500 * fails, 10000), ctl);
+      stop();
       u = await api("/api/uploads/" + u.id).catch(() => u); // how much really arrived
     }
   }
   return u.id;
 }
+
+// "۴٫۸" / "۱۲" megabytes (under 10 MB: one decimal; above: whole numbers)
+const mb = (b) => { const m = b / 1048576; return fa(m < 10 ? m.toFixed(1) : Math.round(m)).replace(".", "٫"); };
+
+// ---------- draft of the create page ----------
+// Everything on the create page (picked files, brief, length, output, mode) is kept in IndexedDB in this phone, so a
+// reload, a closed tab or the phone killing the app loses nothing. Files are stored once each (a record per file);
+// the small fields go in one record that is rewritten on every change. Cleared when the content is sent or on logout.
+// The db name has the page path in it: other apps under the same domain (BASE_URL) have their own.
+const DRAFT_DB = "creator-draft:" + location.pathname;
+let draftDbP = null;
+const draftDb = () => (draftDbP ||= new Promise((ok, bad) => {
+  const r = indexedDB.open(DRAFT_DB, 1);
+  r.onupgradeneeded = () => { r.result.createObjectStore("files"); r.result.createObjectStore("kv"); };
+  r.onsuccess = () => ok(r.result);
+  r.onerror = () => bad(r.error);
+}));
+async function draftTx(store, mode, fn) {
+  const d = await draftDb();
+  return new Promise((ok, bad) => {
+    const t = d.transaction(store, mode), req = fn(t.objectStore(store));
+    t.oncomplete = () => ok(req?.result);
+    t.onerror = t.onabort = () => bad(t.error);
+  });
+}
+const quiet = (p) => p.catch((e) => console.warn("draft:", e)); // a draft that can't be saved (private mode, full disk) never blocks the app
+const draftSaveFile = (p) => quiet(draftTx("files", "readwrite", (s) => s.put({ file: p.file, kind: p.kind }, p.id)));
+const draftDropFile = (id) => quiet(draftTx("files", "readwrite", (s) => s.delete(id)));
+let draftTimer;
+function draftSaveFields() {
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(() => quiet(draftTx("kv", "readwrite", (s) => s.put({
+    owner: S.me?.phone, brief: S.brief || "", len: S.len, out: S.out, mode: S.mode,
+    pick: S.pick.map((p) => ({ id: p.id, kind: p.kind, frames: p.frames })),
+  }, "draft"))), 300);
+}
+function draftClear() {
+  clearTimeout(draftTimer);
+  return quiet(Promise.all([draftTx("kv", "readwrite", (s) => s.clear()), draftTx("files", "readwrite", (s) => s.clear())]));
+}
+/** Put the saved draft back into S (after login is known). Items whose file did not survive are left out. */
+async function draftLoad() {
+  try {
+    const d = await draftTx("kv", "readonly", (s) => s.get("draft"));
+    if (!d) return;
+    if (d.owner !== S.me?.phone) return draftClear(); // someone else's draft on a shared phone
+    const pick = [];
+    for (const it of d.pick || []) {
+      const f = await draftTx("files", "readonly", (s) => s.get(it.id));
+      if (f?.file) pick.push({ id: it.id, kind: it.kind, file: f.file, frames: it.frames || (it.kind === "video" ? [VIDEO_THUMB] : null) });
+    }
+    Object.assign(S, { pick, brief: d.brief || "", len: d.len, out: d.out, mode: d.mode });
+  } catch (e) { console.warn("draft:", e); }
+}
+const hasDraft = () => S.pick.length > 0 || !!(S.brief || "").trim();
 
 views.create = () => {
   if (!S.me.style) return go("#/wizard");
@@ -387,42 +521,57 @@ views.create = () => {
     const hasVideo = P.some((p) => p.kind === "video");
     const asReel = hasVideo || S.out === "reel";
     const ready = P.length && P.every((p) => p.frames) && !uploading;
-    const label = asReel ? "✦ ساخت ریل" : `✦ تولید ${P.length > 1 && S.mode === "separate" ? `${fa(P.length)} پست` : ""}`;
+    const label = asReel ? "✦ ساخت ریلز" : `✦ تولید ${P.length > 1 && S.mode === "separate" ? `${fa(P.length)} پست` : ""}`;
     $app.innerHTML = `
-      <div class="topbar"><button class="back" id="bk">→</button><div class="title">تولید محتوا</div></div>
+      <div class="topbar"><button class="back" id="bk">→</button><div class="title">ریلز جدید</div></div>
+      ${S.jobs.some((j) => j.status === "queued" || j.status === "running") ? `<div class="card running-note">⏳ ${fa(S.jobs.filter((j) => j.status === "queued" || j.status === "running").length)} ریلز داره ساخته می‌شه؛ تو صفحه‌ی خانه می‌بینیش. اینجا یه ریلز <b>جدید</b> می‌سازی.</div>` : ""}
       <div class="picker" id="add"><div class="ic">📷</div><b>${P.length ? "افزودن فایل دیگه" : "انتخاب عکس یا ویدیو"}</b><span class="muted">می‌تونی چندتا با هم انتخاب کنی</span></div>
-      ${P.length ? `<div class="grid">${P.map((p) => `<div class="tile ${p.frames ? "" : "loading"}">${p.frames ? `<img src="${p.frames[0]}">` : ""}<button class="x" data-rm="${p.id}">✕</button>${p.kind === "video" ? '<span class="k">ویدیو</span>' : ""}</div>`).join("")}</div>` : ""}
-      ${P.length && !hasVideo ? `<h3 style="margin-top:16px">خروجی</h3><div class="seg"><button data-o="reel" class="${S.out === "reel" ? "on" : ""}">🎬 ریل ویدیویی</button><button data-o="text" class="${S.out === "text" ? "on" : ""}">📝 فقط متن</button></div>` : ""}
-      ${asReel && P.length ? `<p class="muted" style="margin-top:12px">🎬 ${P.length > 1 ? "همه با هم یه ریل می‌شن" : hasVideo ? "ویدیوت ادیت می‌شه" : "عکست ریل می‌شه"}: ${hasVideo ? "بهترین تیکه‌ها، متن فارسی، زیرنویس حرف‌ها" : "حرکت آروم روی عکس، متن فارسی"}، قالب عمودی و کاور.</p>`
+      ${hasDraft() && !uploading ? `<div style="text-align:center;margin-top:8px"><a class="link" id="reset" href="javascript:void 0">🗑 پاک کردن همه و شروع از نو</a></div>` : ""}
+      ${P.length ? `<div class="grid">${P.map((p) => `<div class="tile ${p.frames ? "" : "loading"}" data-tile="${p.id}">${p.frames ? `<img src="${p.frames[0]}">` : ""}<button class="x" data-rm="${p.id}">✕</button>${p.kind === "video" ? '<span class="k">ویدیو</span>' : ""}</div>`).join("")}</div>` : ""}
+      ${P.length && !hasVideo ? `<h3 style="margin-top:16px">خروجی</h3><div class="seg"><button data-o="reel" class="${S.out === "reel" ? "on" : ""}">🎬 ریلز ویدیویی</button><button data-o="text" class="${S.out === "text" ? "on" : ""}">📝 فقط متن</button></div>` : ""}
+      ${asReel && P.length ? `<p class="muted" style="margin-top:12px">🎬 ${P.length > 1 ? "همه با هم یه ریلز می‌شن" : hasVideo ? "ویدیوت ادیت می‌شه" : "عکست ریلز می‌شه"}: ${hasVideo ? "بهترین تیکه‌ها، متن فارسی، زیرنویس حرف‌ها" : "حرکت آروم روی عکس، متن فارسی"}، قالب عمودی و کاور.</p>`
         : P.length > 1 ? `<h3 style="margin-top:16px">این ${fa(P.length)} عکس…</h3><div class="seg"><button data-m="separate" class="${S.mode === "separate" ? "on" : ""}">هر کدوم یه پست جدا</button><button data-m="carousel" class="${S.mode === "carousel" ? "on" : ""}">همه با هم یه پست</button></div>` : ""}
-      ${asReel && P.length ? `<h3 style="margin-top:16px">طول ریل</h3><div class="seg">${[["auto", "خودکار"], ["15", "۱۵ ثانیه"], ["30", "۳۰ ثانیه"], ["60", "۶۰ ثانیه"]].map(([v, t]) => `<button data-len="${v}" class="${S.len === v ? "on" : ""}">${t}</button>`).join("")}</div>` : ""}
-      <h3 style="margin-top:16px">موضوع یا هدف پست (اختیاری)</h3>
-      <input id="brief" placeholder="مثلاً: معرفی محصول جدید، فروش بیشتر" value="${esc(S.brief || "")}" />
+      ${asReel && P.length ? `<h3 style="margin-top:16px">طول ریلز</h3><div class="seg">${[["auto", "خودکار"], ["15", "۱۵ ثانیه"], ["30", "۳۰ ثانیه"], ["60", "۶۰ ثانیه"]].map(([v, t]) => `<button data-len="${v}" class="${S.len === v ? "on" : ""}">${t}</button>`).join("")}</div>` : ""}
+      <h3 style="margin-top:16px">توضیح بیشتر (اختیاری)</h3>
+      ${voiceArea("brief", 'rows="4" maxlength="1500" placeholder="هر چی بیشتر بگی، بهتر می‌شه: موضوع و هدف، مخاطب، پیام اصلی، چیزی که حتماً باشه یا نباشه، دعوت به اقدام… مثلاً: معرفی کفش جدید برای خانم‌های جوون، تخفیف ۲۰٪ تا جمعه، آخرش بگه دایرکت بدید."', S.brief || "")}
+      ${canVoice() ? '<p class="muted hint">می‌تونی تایپ کنی، یا میکروفون توی کادر رو بزنی و بگی.</p>' : ""}
       <div class="spacer"></div>
       <div class="bottom-bar"><button class="btn" id="gen" ${ready ? "" : "disabled"}>${label}</button></div>`;
     document.getElementById("bk").onclick = () => !uploading && go("#/home");
     document.getElementById("add").onclick = () => !uploading && add();
-    document.getElementById("brief").oninput = (e) => (S.brief = e.target.value);
-    document.querySelectorAll("[data-rm]").forEach((b) => (b.onclick = () => { if (uploading) return; P.splice(P.findIndex((p) => p.id === b.dataset.rm), 1); render(); }));
-    document.querySelectorAll("[data-m]").forEach((b) => (b.onclick = () => { S.mode = b.dataset.m; render(); }));
-    document.querySelectorAll("[data-o]").forEach((b) => (b.onclick = () => { S.out = b.dataset.o; render(); }));
-    document.querySelectorAll("[data-len]").forEach((b) => (b.onclick = () => { S.len = b.dataset.len; render(); }));
+    document.getElementById("brief").oninput = (e) => { S.brief = e.target.value; draftSaveFields(); };
+    wireMics();
+    document.getElementById("reset")?.addEventListener("click", () => {
+      if (uploading || !confirm("همه‌ی فایل‌ها و نوشته‌ها پاک بشن؟")) return;
+      P.length = 0; S.brief = ""; S.len = "auto"; S.out = "reel"; S.mode = "separate";
+      draftClear(); render();
+    });
+    document.querySelectorAll("[data-rm]").forEach((b) => (b.onclick = () => { if (uploading) return; P.splice(P.findIndex((p) => p.id === b.dataset.rm), 1); draftDropFile(b.dataset.rm); draftSaveFields(); render(); }));
+    document.querySelectorAll("[data-m]").forEach((b) => (b.onclick = () => { S.mode = b.dataset.m; draftSaveFields(); render(); }));
+    document.querySelectorAll("[data-o]").forEach((b) => (b.onclick = () => { S.out = b.dataset.o; draftSaveFields(); render(); }));
+    document.querySelectorAll("[data-len]").forEach((b) => (b.onclick = () => { S.len = b.dataset.len; draftSaveFields(); render(); }));
     document.getElementById("gen").onclick = () => (asReel ? submitReel() : submitPosts());
   };
   const rerender = () => location.hash === "#/create" && !uploading && render();
+  // video: only a thumbnail here (the whole file is uploaded and cut on the server); photo: shrink in the phone
+  const makeFrames = (p) => {
+    p.busy = true;
+    (p.kind === "video" ? videoFrames(p.file, 1, 240).catch(() => [VIDEO_THUMB]) : fileFrames(p.file, "post"))
+      .then((fr) => { p.frames = fr; p.busy = false; draftSaveFields(); rerender(); })
+      .catch((err) => { draftDropFile(p.id); toast(isUnreadable(err) ? "این فایل خونده نشد (شاید هنوز کامل روی گوشی نیومده). یه بار بازش کن و دوباره انتخابش کن." : err.message, { type: "err" }); P.splice(P.indexOf(p), 1); draftSaveFields(); rerender(); });
+  };
   async function add() {
     const files = await pickFiles(true);
     for (const f of files) {
-      const isVideo = f.type.startsWith("video/");
-      const p = { id: Math.random().toString(36).slice(2), kind: isVideo ? "video" : "image", file: f, frames: null };
+      const p = { id: Math.random().toString(36).slice(2), kind: f.type.startsWith("video/") ? "video" : "image", file: f, frames: null };
       P.push(p);
+      draftSaveFile(p);
+      draftSaveFields();
       render();
-      // video: only a thumbnail here (the whole file is uploaded and cut on the server); photo: shrink in the phone
-      (isVideo ? videoFrames(f, 1, 240).catch(() => [VIDEO_THUMB]) : fileFrames(f, "post"))
-        .then((fr) => { p.frames = fr; rerender(); })
-        .catch((err) => { toast(err.message, { type: "err" }); P.splice(P.indexOf(p), 1); rerender(); });
+      makeFrames(p);
     }
   }
+  P.forEach((p) => !p.frames && !p.busy && makeFrames(p)); // restored from a draft before its frames were ready
   async function submitPosts() {
     const posts = P.length > 1 && S.mode === "carousel" ? [{ kind: "carousel", frames: P.flatMap((p) => p.frames).slice(0, 6) }] : P.map((p) => ({ kind: p.kind, frames: p.frames }));
     busy("gen", true);
@@ -431,7 +580,7 @@ views.create = () => {
         const j = await api("/api/jobs", { method: "POST", body: { ...post, brief: S.brief || "" } });
         S.jobs.unshift(j); S.seen[j.id] = j.status;
       }
-      S.pick = []; S.brief = "";
+      S.pick = []; S.brief = ""; draftClear();
       toast(posts.length > 1 ? `${fa(posts.length)} پست رفت تو صف تولید. آماده شد خبرت می‌کنم.` : "رفت تو صف تولید. آماده شد خبرت می‌کنم.");
       startPolling();
       go("#/home");
@@ -441,36 +590,62 @@ views.create = () => {
     const btn = document.getElementById("gen");
     uploading = true;
     btn.disabled = true;
-    let job = null;
+    let job = null, current = -1;
+    const ctl = uploadCtl();
+    document.getElementById("reset")?.parentElement.remove(); // no "start over" while sending
+    btn.insertAdjacentHTML("afterend", '<button class="btn ghost" id="cancel-up" style="margin-top:8px">لغو آپلود</button>');
+    document.getElementById("cancel-up").onclick = () => ctl.cancel();
     try {
       btn.innerHTML = '<span class="spinner"></span> آماده‌سازی…';
       const blobs = await Promise.all(P.map(async (p) => (p.kind === "video" ? p.file : dataUrlToBlob((await imageFrames(p.file, 1280))[0]))));
       const totalBytes = blobs.reduce((a, b) => a + b.size, 0);
       let done = 0, pct = 0, sent = 0;
       const ids = [];
-      // "۴٫۸ از ۱۲٫۳ مگابایت" (under 10 MB: one decimal; above: whole numbers)
-      const mb = (b) => { const m = b / 1048576; return fa(m < 10 ? m.toFixed(1) : Math.round(m)).replace(".", "٫"); };
+      // each file's own progress, over its tile: percent, sent of total, what is left
+      const tile = (i, state, got = 0) => {
+        const el = document.querySelector(`[data-tile="${P[i].id}"]`);
+        if (!el) return;
+        let up = el.querySelector(".up");
+        if (!up) { up = document.createElement("div"); el.appendChild(up); }
+        const size = blobs[i].size, p = Math.floor((got / size) * 100);
+        up.className = "up" + (state === "done" ? " ok" : state === "wait" ? " wait" : "");
+        up.innerHTML = state === "done" ? "<b>✓</b>آپلود شد"
+          : state === "wait" ? `<b>در صف</b>${mb(size)} مگ`
+          : `<b>${fa(p)}٪</b><span>${mb(got)} از ${mb(size)} مگ</span><span>${state === "retry" ? "قطع شد، ادامه می‌دم…" : `${mb(size - got)} مگ مونده`}</span><div class="bar"><i style="width:${p}%"></i></div>`;
+      };
+      blobs.forEach((_, i) => tile(i, "wait"));
       // two lines on the button: the state, then the sizes
       const show = (line) => (btn.innerHTML = `<span class="spinner"></span><span style="display:flex;flex-direction:column;line-height:1.35;margin-inline-start:8px">${line}<small style="opacity:.8;font-weight:400">${mb(sent)} از ${mb(totalBytes)} مگابایت${blobs.length > 1 ? ` · ${fa(blobs.length)} فایل` : ""}</small></span>`);
       for (let i = 0; i < blobs.length; i++) {
+        current = i;
         ids.push(await uploadResumable(
           blobs[i],
-          (got) => { sent = done + got; pct = Math.floor((sent / totalBytes) * 100); show(`آپلود ${fa(pct)}٪ — صفحه رو باز نگه دار`); },
-          () => show(`اتصال قطع شد (${fa(pct)}٪)، ادامه می‌دم…`)
+          (got) => { sent = done + got; pct = Math.floor((sent / totalBytes) * 100); tile(i, "up", got); show(`آپلود ${fa(pct)}٪ — صفحه رو باز نگه دار`); },
+          () => { tile(i, "retry", sent - done); show(`اتصال قطع شد (${fa(pct)}٪)، ادامه می‌دم…`); },
+          ctl
         ));
         done += blobs[i].size;
+        tile(i, "done");
       }
+      current = -1;
+      if (ctl.cancelled) throw CANCELLED();
+      document.getElementById("cancel-up")?.remove(); // past this point the reel is being made
       job = await api("/api/reels", { method: "POST", body: { brief: S.brief || "", length: S.len === "auto" ? null : +S.len, files: P.map((p, i) => ({ type: p.kind, upload: ids[i] })) } });
       const j = await api(`/api/reels/${job.id}/start`, { method: "POST" });
       S.jobs.unshift(j); S.seen[j.id] = j.status;
-      S.pick = []; S.brief = ""; uploading = false;
+      S.pick = []; S.brief = ""; uploading = false; draftClear();
       toast("آپلود شد. دارم ادیتش می‌کنم، آماده شد خبرت می‌کنم 🎬");
       startPolling();
       go("#/home");
     } catch (err) {
       uploading = false;
       if (job) api("/api/jobs/" + job.id, { method: "DELETE" }).catch(() => {}); // drop the half-uploaded job
-      toast(err.message, { type: "err", ms: 7000 });
+      if (err.cancelled) toast("آپلود لغو شد. اگه دوباره بزنی، از همون‌جا که مونده ادامه می‌ده.");
+      else if (isUnreadable(err)) {
+        // that file can't be read any more → take it out; picking it again goes on from what was already sent
+        if (current >= 0 && P[current]) { draftDropFile(P[current].id); P.splice(current, 1); draftSaveFields(); }
+        toast("دسترسی به فایل قطع شد (شاید هنوز کامل روی گوشی نیومده یا برنامه مدتی پس‌زمینه بوده). دوباره انتخابش کن؛ از همون‌جا که مونده ادامه می‌ده.", { type: "err", ms: 9000 });
+      } else toast(err.message, { type: "err", ms: 7000 });
       render(); // the picked files stay selected, so one tap tries again
     }
   }
@@ -504,9 +679,10 @@ views.job = (id) => {
       ${o.tips?.length ? `<div class="block"><h3>نکته</h3><ul style="margin:0;padding-right:18px">${o.tips.map((t) => `<li>${esc(t)}</li>`).join("")}</ul></div>` : ""}
       ${j.kind === "reel" && j.revisable ? `<div class="block" id="fbk"><h3>نظرت چیه؟</h3>
         <div class="fb"><button class="btn small ${j.feedback?.rating === 1 ? "" : "ghost"}" id="up">👍 خوبه</button><button class="btn small ${j.feedback?.rating === -1 ? "" : "ghost"}" id="down">👎 نه</button></div>
-        <textarea id="rv" rows="2" placeholder="چی عوض بشه؟ مثلاً: کوتاه‌ترش کن، موزیک نذار، متن اول رو عوض کن"></textarea>
+        <p class="muted" style="font-size:.85rem;margin:10px 0 0">چی عوض بشه؟</p>
+        ${voiceArea("rv", 'rows="3" maxlength="1000" placeholder="مثلاً: کوتاه‌ترش کن، موزیک نذار، متن اول رو عوض کن، تیکه‌ای که می‌خندم رو اول بذار…"')}
         <button class="btn" id="rvb">✨ دوباره ادیت کن</button>
-        <p class="muted" style="font-size:.78rem;margin:6px 0 0">ویدیو دوباره آپلود نمی‌شه؛ فقط یه درخواست کوچیک متنی می‌ره. نظرت برای ریل‌های بعدی هم یادم می‌مونه.</p></div>` : ""}
+        <p class="muted" style="font-size:.78rem;margin:6px 0 0">ویدیو دوباره آپلود نمی‌شه؛ فقط یه درخواست کوچیک متنی می‌ره. نظرت برای ریلز‌های بعدی هم یادم می‌مونه.</p></div>` : ""}
       ${j.revise ? `<p class="muted center" style="font-size:.8rem">ادیت دوباره، طبق درخواست: «${esc(j.revise.note)}»</p>` : ""}
       <div class="usage">${j.usage?.tokens ? `مصرف: ${fa(j.usage.tokens.toLocaleString())} توکن${j.usage.note ? ` (${j.usage.note})` : ""}` : ""}</div>
       <button class="btn ghost" id="del" style="margin-top:12px">حذف</button>`;
@@ -532,6 +708,7 @@ views.job = (id) => {
     } catch (err) { toast(err.message, { type: "err" }); }
   };
   const up = document.getElementById("up");
+  wireMics();
   if (up) {
     up.onclick = () => rate(1);
     document.getElementById("down").onclick = () => rate(-1);
@@ -598,8 +775,8 @@ views.settings = (fresh) => {
     <div class="section-title">پلن و مصرف</div>
     <div class="card">${S.me.admin ? '<div class="row"><span>پلن</span><span class="v">مدیر (بدون محدودیت)</span></div>' : S.me.plan ? `
       <div class="row"><span>پلن</span><span class="v">${esc(S.me.plan.name)}${S.me.plan.until ? ` · تا ${faDate(S.me.plan.until)}` : ""}</span></div>
-      <div class="row"><span>ریل امروز</span><span class="v">${limitText(S.me.plan.used.reelsToday, S.me.plan.reelsPerDay)}</span></div>
-      <div class="row"><span>ریل ۳۰ روز اخیر</span><span class="v">${limitText(S.me.plan.used.reelsMonth, S.me.plan.reelsPerMonth)}</span></div>
+      <div class="row"><span>ریلز امروز</span><span class="v">${limitText(S.me.plan.used.reelsToday, S.me.plan.reelsPerDay)}</span></div>
+      <div class="row"><span>ریلز ۳۰ روز اخیر</span><span class="v">${limitText(S.me.plan.used.reelsMonth, S.me.plan.reelsPerMonth)}</span></div>
       <div class="row"><span>پست امروز</span><span class="v">${limitText(S.me.plan.used.postsToday, S.me.plan.postsPerDay)}</span></div>` : ""}
       <div class="row"><span>کل توکن مصرف‌شده</span><span class="v">${fa((u.tokens || 0).toLocaleString())}</span></div></div>
     ${S.me.admin ? '<a class="btn" href="#/admin" style="margin-top:16px">پنل مدیریت</a>' : ""}
@@ -635,11 +812,11 @@ views.settings = (fresh) => {
     try { S.me = await api("/api/brand/logo", { method: "POST", body: { dataUrl: await toPng(f) } }); views.settings(); toast("لوگو ذخیره شد"); }
     catch (err) { toast(err.message, { type: "err" }); }
   };
-  document.getElementById("out").onclick = async () => { await api("/api/auth/logout", { method: "POST" }).catch(() => {}); setToken(null); S.me = null; S.jobs = []; go("#/login"); };
+  document.getElementById("out").onclick = async () => { await api("/api/auth/logout", { method: "POST" }).catch(() => {}); setToken(null); S.me = null; S.jobs = []; S.pick = []; S.brief = ""; draftClear(); go("#/login"); };
 };
 
 // ---------------- admin: users ↔ plans, the plans themselves (only for ADMIN_PHONE) ----------------
-const LIMIT_FA = { reelsPerDay: "ریل در روز", reelsPerMonth: "ریل در ۳۰ روز", postsPerDay: "پست در روز" };
+const LIMIT_FA = { reelsPerDay: "ریلز در روز", reelsPerMonth: "ریلز در ۳۰ روز", postsPerDay: "پست در روز" };
 views.admin = async () => {
   if (!S.me.admin) return go("#/settings");
   $app.innerHTML = '<div class="topbar"><button class="back" id="bk">→</button><div class="title">پنل مدیریت</div></div><div id="adm" class="center"><span class="spinner dark"></span></div>';
@@ -667,7 +844,7 @@ views.admin = async () => {
       <div class="row muted"><span>پلن الان</span><span>${esc(planName(u.effective))}</span></div>`}
       <div class="row"><span>یادداشت</span><input data-k="note" value="${esc(u.note)}" placeholder="—"></div>
       <div class="row muted"><span>امروز</span><span>${fa(u.used.reelsToday)} ریل، ${fa(u.used.postsToday)} پست</span></div>
-      <div class="row muted"><span>۳۰ روز اخیر</span><span>${fa(u.used.reelsMonth)} ریل</span></div>
+      <div class="row muted"><span>۳۰ روز اخیر</span><span>${fa(u.used.reelsMonth)} ریلز</span></div>
       <div class="row muted"><span>${fa(u.jobs)} کار${u.failed ? ` (${fa(u.failed)} خطا)` : ""}</span><span>${fa(u.tokens.toLocaleString())} توکن</span></div>
     </div>`).join("") || '<div class="empty">کاربری پیدا نشد.</div>'}
     <div class="section-title">پلن‌ها</div>
@@ -766,6 +943,7 @@ window.addEventListener("hashchange", route);
       S.me = await api("/api/me");
       S.jobs = await api("/api/jobs");
       S.jobs.forEach((j) => (S.seen[j.id] = j.status));
+      await draftLoad();
       poll();
     } catch { setToken(null); }
   }

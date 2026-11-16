@@ -23,6 +23,20 @@ Without Kavenegar settings the login code is shown on screen (demo). Without a G
 `BASE_URL=/creator npm start` serves everything at `/creator/` (`/creator` redirects there), so several apps can share one
 domain / container behind a reverse proxy. The page uses only relative URLs, so a proxy that strips the prefix works too.
 
+## Docker: keep the data (volume)
+
+Everything the app writes lives under `DATA_DIR` (default `./data`): `db.json` (users, plans, jobs), `uploads/`
+(photos, logos), `parts/` (resumable uploads), `jobs/<id>/` (input videos + finished `out.mp4` / covers),
+`usage-log.jsonl`, `beats.json`. Point it at a mounted volume and nothing is lost when the container is rebuilt:
+
+```bash
+docker run -e DATA_DIR=/data -v creator-data:/data ...        # named volume
+docker run -e DATA_DIR=/data -v /srv/creator:/data ...        # or a folder on the host
+```
+
+(compose: `environment: [DATA_DIR=/data]`, `volumes: ["creator-data:/data"]`.) Only temporary files (voice notes
+while being turned into text) go to the system temp folder and are deleted right away.
+
 ## Stack
 - Node.js + Express, JSON file storage in `data/` (no database)
 - GapGPT (OpenAI-compatible) via the `openai` SDK — `src/ai.js`

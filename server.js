@@ -5,7 +5,7 @@ import express from "express";
 import { jobDir } from "./src/media.js";
 import { getDb, save, flushSync, newId, saveFrames, deleteFrames, uploadDir } from "./src/store.js";
 import { sendCode, verifyCode, requireUser, logout, smsEnabled } from "./src/auth.js";
-import { demoMode, MODEL } from "./src/ai.js";
+import { demoMode, MODEL, transcribe } from "./src/ai.js";
 import { enqueue } from "./src/jobs.js";
 import { uploadRoutes, takeUpload, MAX_UPLOAD } from "./src/uploads.js";
 import { ensurePlans, isAdmin, planView, quotaError, cleanPlan, usageOf, planOf } from "./src/plans.js";
@@ -136,6 +136,33 @@ app.delete("/api/brand/logo", requireUser, (req, res) => {
   res.json(publicUser(req.user));
 });
 
+// ---------- voice note → text (the brief or a revise request, spoken instead of typed) ----------
+// Raw audio body (what the phone's MediaRecorder makes: webm / ogg / mp4), max ~3 min. Whisper, Persian.
+// A daily cap per user keeps the cost bounded (Whisper: $0.006 a minute).
+const VOICE_MAX = 4 * 1024 * 1024, VOICE_PER_DAY = 40;
+const VOICE_EXT = { "audio/webm": "webm", "audio/ogg": "ogg", "audio/mp4": "m4a", "audio/mpeg": "mp3", "audio/wav": "wav", "audio/x-m4a": "m4a" };
+app.post("/api/voice", requireUser, express.raw({ type: "audio/*", limit: VOICE_MAX }), wrap(async (req, res) => {
+  const type = String(req.get("content-type") || "").split(";")[0].trim();
+  const ext = VOICE_EXT[type];
+  if (!ext || !Buffer.isBuffer(req.body) || req.body.length < 500) return res.status(400).json({ error: "صدا ضبط نشد. دوباره امتحان کن." });
+  const day = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Tehran" });
+  const v = req.user.voice?.day === day ? req.user.voice : (req.user.voice = { day, n: 0 });
+  if (!isAdmin(req.user) && v.n >= VOICE_PER_DAY) return res.status(429).json({ error: "امروز به اندازه‌ی کافی صدا فرستادی. بقیه‌ش رو تایپ کن." });
+  if (demoMode) { v.n++; save(); return res.json({ text: "(دمو) این متنِ صدای توئه؛ با کلید واقعی، حرفت اینجا نوشته می‌شه." }); }
+  const file = path.join(os.tmpdir(), `voice-${newId(8)}.${ext}`);
+  fs.writeFileSync(file, req.body);
+  try {
+    const r = await transcribe(file, "fa");
+    v.n++;
+    req.user.usage ??= { tokens: 0, cost: 0 };
+    req.user.usage.cost = (req.user.usage.cost || 0) + (r.cost || 0);
+    save();
+    const text = r.segments.map((x) => x.text).join(" ").replace(/s+/g, " ").trim();
+    if (!text) return res.status(400).json({ error: "صدایی شنیده نشد. نزدیک‌تر به گوشی حرف بزن." });
+    res.json({ text });
+  } finally { fs.rmSync(file, { force: true }); }
+}));
+
 // ---------- feedback (👍 / 👎 + note) and "revise" ----------
 const rememberTaste = (user, note) => {
   if (!note) return;
@@ -145,7 +172,7 @@ app.post("/api/jobs/:id/feedback", requireUser, (req, res) => {
   const job = db.jobs.find((j) => j.id === req.params.id && j.userId === req.user.id);
   if (!job) return res.status(404).json({ error: "پیدا نشد." });
   const rating = req.body.rating === 1 ? 1 : req.body.rating === -1 ? -1 : 0;
-  const note = String(req.body.note || "").trim().slice(0, 300);
+  const note = String(req.body.note || "").trim().slice(0, 1000);
   job.feedback = { rating, note, at: Date.now() };
   if (note) rememberTaste(req.user, rating < 0 ? `didn't like: ${note}` : `liked: ${note}`);
   save();
@@ -154,9 +181,9 @@ app.post("/api/jobs/:id/feedback", requireUser, (req, res) => {
 app.post("/api/jobs/:id/revise", requireUser, wrap(async (req, res) => {
   quota(req.user, "reel");
   const parent = db.jobs.find((j) => j.id === req.params.id && j.userId === req.user.id);
-  const note = String(req.body.note || "").trim().slice(0, 300);
-  if (!parent || parent.kind !== "reel" || parent.status !== "done") return res.status(400).json({ error: "این ریل قابل ویرایش نیست." });
-  if (!parent.plan) return res.status(400).json({ error: "این ریل با نسخه‌ی قدیمی ساخته شده؛ یک ریل تازه بساز." });
+  const note = String(req.body.note || "").trim().slice(0, 1000);
+  if (!parent || parent.kind !== "reel" || parent.status !== "done") return res.status(400).json({ error: "این ریلز قابل ویرایش نیست." });
+  if (!parent.plan) return res.status(400).json({ error: "این ریلز با نسخه‌ی قدیمی ساخته شده؛ یک ریلز تازه بساز." });
   if (!note) return res.status(400).json({ error: "بنویس چه چیزی عوض شود." });
   const id = newId();
   const from = jobDir(parent.id), to = jobDir(id);
@@ -189,7 +216,7 @@ app.post("/api/jobs", requireUser, wrap(async (req, res) => {
   const id = newId();
   const job = {
     id, userId: req.user.id, kind: ["video", "carousel"].includes(kind) ? kind : "image",
-    brief: String(brief).slice(0, 300), frames: saveFrames(frames.slice(0, MAX_FRAMES), `j-${id}`),
+    brief: String(brief).slice(0, 1500), frames: saveFrames(frames.slice(0, MAX_FRAMES), `j-${id}`),
     status: "queued", output: null, error: null, usage: { tokens: 0, cost: 0 }, createdAt: Date.now(),
   };
   db.jobs.push(job);
@@ -210,7 +237,7 @@ app.post("/api/reels", requireUser, wrap(async (req, res) => {
   if (!files.length) return res.status(400).json({ error: "فایلی انتخاب نشده." });
   const id = newId();
   const job = {
-    id, userId: req.user.id, kind: "reel", brief: String(req.body.brief || "").slice(0, 300), frames: [],
+    id, userId: req.user.id, kind: "reel", brief: String(req.body.brief || "").slice(0, 1500), frames: [],
     // chosen reel length (s); null = from the brief or the material
     length: [15, 30, 60].includes(Number(req.body.length)) ? Number(req.body.length) : null,
     inputs: files.map((f, i) => ({ n: i + 1, type: f.type === "image" ? "image" : "video", file: `in${i + 1}.${f.type === "image" ? "jpg" : "mp4"}`, uploaded: false })),
@@ -278,7 +305,7 @@ app.post("/api/jobs/:id/retry", requireUser, wrap(async (req, res) => {
   if (!job || job.status !== "error") return res.status(400).json({ error: "قابل تکرار نیست." });
   quota(req.user, job.kind === "reel" ? "reel" : "post");
   if (job.kind === "reel" && !job.inputs.every((i) => fs.existsSync(path.join(jobDir(job.id), i.file))))
-    return res.status(400).json({ error: "فایل‌های این ریل دیگه نیست. دوباره بفرست." });
+    return res.status(400).json({ error: "فایل‌های این ریلز دیگه نیست. دوباره بفرست." });
   Object.assign(job, { status: "queued", error: null });
   save();
   enqueue(job);

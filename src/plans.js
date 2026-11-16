@@ -50,9 +50,9 @@ export function quotaError(db, user, kind, now = Date.now()) {
   const plan = planOf(db, user, now), used = usageOf(db, user, now);
   const over = (limit, n) => limit != null && n >= limit;
   if (kind === "reel") {
-    if (plan.reelsPerDay === 0 || plan.reelsPerMonth === 0) return "حسابت هنوز برای ساخت ریل فعال نشده.";
-    if (over(plan.reelsPerDay, used.reelsToday)) return `سهم امروزت تموم شد (${fa(plan.reelsPerDay)} ریل در روز). فردا دوباره امتحان کن.`;
-    if (over(plan.reelsPerMonth, used.reelsMonth)) return `سهم این ماهت تموم شد (${fa(plan.reelsPerMonth)} ریل در ۳۰ روز).`;
+    if (plan.reelsPerDay === 0 || plan.reelsPerMonth === 0) return "حسابت هنوز برای ساخت ریلز فعال نشده.";
+    if (over(plan.reelsPerDay, used.reelsToday)) return `سهم امروزت تموم شد (${fa(plan.reelsPerDay)} ریلز در روز). فردا دوباره امتحان کن.`;
+    if (over(plan.reelsPerMonth, used.reelsMonth)) return `سهم این ماهت تموم شد (${fa(plan.reelsPerMonth)} ریلز در ۳۰ روز).`;
   } else {
     if (plan.postsPerDay === 0) return "حسابت هنوز برای ساخت پست فعال نشده.";
     if (over(plan.postsPerDay, used.postsToday)) return `سهم امروزت تموم شد (${fa(plan.postsPerDay)} پست در روز). فردا دوباره امتحان کن.`;

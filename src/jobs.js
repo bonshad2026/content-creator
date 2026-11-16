@@ -60,7 +60,7 @@ async function run(job) {
       if (job.revise) {
         // revise = the previous plan + the creator's note → updated plan (text only: no frames, no speech-to-text again)
         const parent = db.jobs.find((j) => j.id === job.revise.parentId);
-        if (!parent?.plan) throw new Error("پلن ویدیوی قبلی پیدا نشد. یک ریل تازه بساز.");
+        if (!parent?.plan) throw new Error("پلن ویدیوی قبلی پیدا نشد. یک ریلز تازه بساز.");
         job.stage = "writing";
         save();
         const info = job.inputs.map((i) => `${i.n}: ${i.type}`).join(", ");

@@ -532,3 +532,18 @@ and assigns plans; the app must run under a `BASE_URL` (later several apps in on
 - `POST /api/reels` takes `files[].upload`; the file is hard-linked into the job folder (no copy). Kept 3 days after
   last use in `DATA_DIR/parts`, then swept. Upload start is refused if the plan allows no reel.
 - Tests: `npm run test:uploads` (14). Checked in the browser: drop at 39% → resumed from 4.8 MB; same file again → 0 bytes, 0.26 s.
+- Cancel button ("لغو آپلود") while uploading; what was sent stays, so tapping again continues. Browser error
+  "The requested file could not be read" (NotReadableError: the phone lost access to the picked file — cloud file not
+  downloaded yet, app long in background) now shows a Persian message and drops that file so the user re-picks it.
+- Create page is a draft: files + brief + length/output/mode kept in IndexedDB (`creator-draft:<path>`), restored
+  after reload, home shows "ادامه‌ی پیش‌نویس", "پاک کردن همه و شروع از نو" link; cleared on send and on logout.
+- Each picked file shows its own upload progress over its tile (%, sent of total MB, MB left, queued / done).
+- UI wording: "ریل" → "ریلز" everywhere (app, server and plan messages).
+- Brief (create) and revise request: bigger textareas (1500 / 1000 chars) + 🎤 voice input (`POST /api/voice`,
+  raw audio → Whisper "fa", 40 a day per user, demo returns a fixed text). Mic only on HTTPS / localhost.
+  Real Whisper not tried yet (no tokens spent).
+- Home: "در حال ساخت (n)" card on its own (stage + moving bar per item), then the button "ساخت ریلز جدید"
+  (smaller while something is being made), then "آخرین‌ها". Create page title "ریلز جدید" + a note when reels are
+  being made.
+- Docker volume: everything is under DATA_DIR (usage-log.jsonl was the one file fixed to data/ — now under DATA_DIR).
+  README "Docker: keep the data". Mount a volume at e.g. /data with DATA_DIR=/data.

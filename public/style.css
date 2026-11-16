@@ -136,3 +136,32 @@ label.row input[type="checkbox"] { width: 22px; height: 22px; flex: none; paddin
 .admin-user .row, .admin-plan .row { gap: 10px; }
 .admin-user select, .admin-user input, .admin-plan input { max-width: 58%; }
 #aq { margin-bottom: 10px; }
+/* per-file upload progress over each tile */
+.tile .up { position: absolute; inset: 0; background: #000b; color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: .68rem; line-height: 1.3; text-align: center; padding: 4px; }
+.tile .up b { font-size: 1rem; }
+.tile .up .bar { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: #fff3; }
+.tile .up .bar i { display: block; height: 100%; background: var(--accent); transition: width .3s; }
+.tile .up.ok { background: #0008; }
+.tile .up.wait { opacity: .85; }
+/* home: what is being made, apart from the "new reels" button */
+.making { border-color: var(--accent); background: var(--accent-soft); padding: 12px; margin-top: 12px; }
+.making-title { display: flex; align-items: center; gap: 8px; font-weight: 700; margin-bottom: 10px; }
+.making .job { background: var(--card); }
+.big-wrap.compact { padding: 3vh 0 2vh; }
+.big-wrap.compact .big { width: 150px; height: 150px; font-size: 1.1rem; }
+.job .indet { height: 3px; border-radius: 3px; background: var(--line); overflow: hidden; margin-top: 6px; }
+.job .indet i { display: block; width: 35%; height: 100%; background: var(--accent); border-radius: 3px; animation: indet 1.4s ease-in-out infinite; }
+@keyframes indet { 0% { transform: translateX(120%); } 100% { transform: translateX(-300%); } }
+.running-note { font-size: .85rem; padding: 10px 12px; margin: 4px 0 12px; border-color: var(--accent); background: var(--accent-soft); }
+/* voice input: the mic sits inside the text box, at its end (left in RTL), like chat apps */
+.ta-wrap { position: relative; margin-top: 8px; }
+.ta-wrap textarea { margin: 0 !important; display: block; }
+.ta-wrap.has-mic textarea { padding-left: 56px; }
+.mic { position: absolute; left: 8px; bottom: 8px; min-width: 40px; height: 40px; padding: 0 10px; border: 0; border-radius: 99px; background: var(--accent); color: #fff; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; font: inherit; font-size: .8rem; }
+.mic:active { transform: scale(.95); }
+.mic.rec { background: var(--err); animation: pulse 1.2s ease-in-out infinite; }
+.mic.busy { background: var(--line); }
+.mic .spinner { width: 16px; height: 16px; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 6px #ef444433; } }
+.hint { font-size: .78rem; margin: 6px 0 0; }
+#fbk .ta-wrap { margin-bottom: 8px; }
