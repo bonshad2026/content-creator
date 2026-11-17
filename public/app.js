@@ -913,7 +913,7 @@ document.addEventListener("visibilitychange", () => !document.hidden && S.token 
 function updateBadge() {
   const n = S.jobs.filter((j) => j.status === "queued" || j.status === "running").length;
   const a = document.querySelector('#tabbar a[data-tab="home"]');
-  a.innerHTML = `<span>⌂</span>خانه${n ? ` <i class="badge">${fa(n)}</i>` : ""}`;
+  a.innerHTML = `<span class="ic">⌂${n ? `<i class="badge">${fa(n)}</i>` : ""}</span>خانه`; // the count sits on the icon corner
 }
 
 // ---------------- router ----------------

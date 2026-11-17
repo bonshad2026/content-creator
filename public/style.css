@@ -108,7 +108,8 @@ video.reel { display: block; width: 100%; max-height: 70dvh; aspect-ratio: 9 / 1
 #tabbar a { flex: 1; max-width: 170px; display: flex; flex-direction: column; align-items: center; text-decoration: none; color: var(--muted); font-size: .75rem; padding: 4px 0; }
 #tabbar a span { font-size: 1.3rem; line-height: 1.2; }
 #tabbar a.on { color: var(--accent); font-weight: 700; }
-#tabbar .badge { background: var(--accent); color: #fff; border-radius: 99px; font-size: .65rem; padding: 0 6px; margin-top: -2px; }
+#tabbar a .ic { position: relative; }
+#tabbar .badge { position: absolute; top: -4px; right: -12px; min-width: 18px; height: 18px; line-height: 18px; text-align: center; background: var(--accent); color: #fff; border-radius: 99px; font-size: .65rem; font-style: normal; font-weight: 700; padding: 0 5px; box-shadow: 0 0 0 2px var(--card); }
 
 /* toasts */
 #toasts { position: fixed; top: calc(10px + env(safe-area-inset-top, 0px)); left: 0; right: 0; display: flex; flex-direction: column; align-items: center; gap: 8px; z-index: 50; pointer-events: none; padding: 0 12px; }

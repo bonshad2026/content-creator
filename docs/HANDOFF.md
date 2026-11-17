@@ -1,5 +1,7 @@
 # Handoff plan: content-creator-expert
 
+> **Newer state: read `docs/HANDOFF-NEXT.md` first (2026-11-17).** This file is the history and the older plan.
+
 Written 2026-11-15 for whoever continues this (a person or a model). Read this before changing code.
 
 ## 1. What the product is
