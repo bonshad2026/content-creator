@@ -33,6 +33,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The checkout belongs to the runner's UID while this container runs as
+      # root, so git refuses to read it ("dubious ownership") without this.
+      - name: Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
