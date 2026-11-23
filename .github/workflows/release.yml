@@ -25,6 +25,10 @@ jobs:
     runs-on: ubuntu-24.04
     # Same Node as the app's runtime, so node_modules and ffmpeg-static match.
     container: node:22-bookworm
+    # Container jobs default to `sh`, which has no pipefail and no [[ ]].
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - uses: actions/checkout@v4
@@ -74,6 +78,11 @@ jobs:
           JSON
 
           ls -l
+
+      # Container jobs get none of the runner's preinstalled tools, and gh is not
+      # in node:22-bookworm. Debian 12 provides it.
+      - name: Install GitHub CLI
+        run: apt-get update -qq && apt-get install -y -qq --no-install-recommends gh
 
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/v')
