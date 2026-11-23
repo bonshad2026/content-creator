@@ -110,7 +110,8 @@ jobs:
             exit 0
           fi
           gh api "repos/bonshad2026/devops-stage/dispatches" \
-            -f event_type=content-creator-release \
+            -f event_type=app-release \
+            -f "client_payload[app]=content-creator" \
             -f "client_payload[version]=${GITHUB_REF_NAME#v}"
 
       - name: Keep the dry-run build
