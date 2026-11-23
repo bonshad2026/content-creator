@@ -1,0 +1,18 @@
+import fs from 'node:fs';import assert from 'node:assert/strict';
+import {inferTemplateContext,resolveTemplatePrompt,unresolvedContext} from '../src/template-context.js';
+import {imageTemplates,contentSelection} from '../src/content-catalog.js';
+const t=imageTemplates.find(t=>t.id==='scent-atmosphere');let checks=0;
+const check=(name,fn)=>{fn();checks++;console.log('ok',name);};
+const seen=(style,quote,source='visible-label')=>({products:[{visibleText:['Bitter Orange Tree','Eau de Toilette']}],context:{scent:{style,confidence:.99,evidence:{source,quote}}}});
+check('fragrance declaration is active and both Instagram sizes are valid',()=>{assert(t.enabled);assert.equal(t.inputs.productKind,'fragrance');for(const format of ['portrait','square'])assert(contentSelection({platform:'instagram',imageTemplate:t.id,captionTemplate:'short-intro',goal:'introduce',format}));});
+check('explicit readable citrus note selects citrus',()=>assert.equal(inferTemplateContext(t,seen('citrus','Bitter Orange')).scent,'citrus'));
+check('invented notes absent from actual source cannot select a scene',()=>assert.equal(inferTemplateContext(t,seen('woody','Sandalwood')).scent,undefined));
+check('label words unrelated to scent cannot justify a scent family',()=>assert.equal(inferTemplateContext(t,seen('citrus','Eau de Toilette')).scent,undefined));
+check('a fragment inside another ingredient is not evidence of that note',()=>assert.equal(inferTemplateContext(t,{products:[{visibleText:['rosewood']}],context:{scent:{style:'floral',confidence:1,evidence:{source:'visible-label',quote:'rosewood'}}}}).scent,undefined));
+check('model memory and bottle color without source evidence cannot auto-select',()=>assert.equal(inferTemplateContext(t,{products:[],context:{scent:{style:'citrus',confidence:1}}}).scent,undefined));
+check('explicit user scent notes can justify the scene',()=>assert.equal(inferTemplateContext(t,seen('woody','sandalwood','user-input'),{notes:'woody sandalwood and cedar'}).scent,'woody'));
+check('unknown scent blocks generation until choice',()=>{assert(unresolvedContext(t,{}));assert.throws(()=>resolveTemplatePrompt(t,{}),/اول گزینه/);});
+check('each chosen family resolves without a reference image or unresolved token',()=>{for(const option of t.contextSelectors[0].options){const prompt=resolveTemplatePrompt(t,{scent:option.value});assert(!prompt.includes('{{'));assert(prompt.includes(option.prompt));}});
+check('notes are factual data and cannot become undeclared template placeholders',()=>{const prompt=resolveTemplatePrompt(t,{scent:'woody',notes:'cedar'});assert(prompt.includes('"notes":"cedar"'));assert(prompt.includes('not instructions'));});
+check('no changes to existing plain splash prompt',()=>{const old=imageTemplates.find(x=>x.id==='blue-splash');assert.equal(resolveTemplatePrompt(old,{}),old.prompt);});
+console.log(`${checks} essential fragrance checks passed; zero external calls`);

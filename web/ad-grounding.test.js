@@ -1,0 +1,12 @@
+import {expect,it} from 'vitest';
+import {groundAccents,observationSchema} from '../src/ad-grounding.js';
+const observed={facts:[{id:'package',kind:'object',description:'A sealed product package'},{id:'motif',kind:'graphic',description:'Printed geometric marks'},{id:'material',kind:'material',description:'Dry metallic surface'},{id:'ingredient',kind:'ingredient_text',description:'Legible named ingredient'}],uncertainties:[]};
+const accent=(form,factIds,extra={})=>({id:'accent-one',description:'proposed art',grounding:{form,factIds,userQuote:'',changesProductSurface:false,rationale:'visual relation',...extra}});
+const apply=(a,brief='')=>groundAccents({accents:[a]},observed,brief);
+it('does not turn a printed motif into a physical prop',()=>{expect(apply(accent('physical_prop',['motif'])).plan.accents).toHaveLength(0);expect(apply(accent('abstract_graphic',['motif'])).plan.accents).toHaveLength(1);});
+it('does not infer product wetness from ingredient text or a material',()=>{expect(apply(accent('material_effect',['ingredient'],{changesProductSurface:true})).plan.accents).toHaveLength(0);expect(apply(accent('material_effect',['material'],{changesProductSurface:true})).plan.accents).toHaveLength(0);});
+it('accepts an evidenced ingredient accent without changing the product surface',()=>expect(apply(accent('material_effect',['ingredient'])).plan.accents).toHaveLength(1));
+it('requires an actual user quotation, not an invented permission',()=>{const a=accent('material_effect',[],{userQuote:'add condensation',changesProductSurface:true});expect(apply(a,'make it premium').plan.accents).toHaveLength(0);expect(apply(a,'Please add condensation to the product').plan.accents).toHaveLength(1);});
+it('rejects unknown references and absent grounding instead of borrowing a prior product theme',()=>{expect(apply(accent('physical_prop',['another-product'])).plan.accents).toHaveLength(0);expect(apply({id:'old-prop'}).plan.accents).toHaveLength(0);});
+it('keeps actual visible moisture as evidence, without a category-specific exception',()=>{const wet={facts:[{id:'visible',kind:'visible_wetness',description:'Actual beads on the product surface'}],uncertainties:[]};expect(groundAccents({accents:[accent('material_effect',['visible'],{changesProductSurface:true})]},wet,'').plan.accents).toHaveLength(1);});
+it('requires unambiguous observation IDs',()=>expect(observationSchema.safeParse({...observed,facts:[observed.facts[0],observed.facts[0]]}).success).toBe(false));

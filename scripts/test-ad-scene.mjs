@@ -1,0 +1,42 @@
+// Whole general capability, synthetic images + mocked providers. Zero paid requests.
+process.env.DATA_DIR='data/test-out/ad-scene-contracts';delete process.env.GAPGPT_API_KEY;
+import fs from 'node:fs';import path from 'node:path';import assert from 'node:assert/strict';import crypto from 'node:crypto';
+import {z} from 'zod';
+const {ffmpeg,probe}=await import('../src/media.js');
+const {designAd,deriveAdLayers,animateAdLayers,adPlanSchema,layerSpecs,masterPrompt,AdSteps,prepareAdVisionImage}=await import('../src/ad-scene.js');
+const root=path.resolve(process.env.DATA_DIR,crypto.randomUUID());fs.mkdirSync(root,{recursive:true});
+const opaque=path.join(root,'opaque.png'),alpha=path.join(root,'alpha.png'),changed=path.join(root,'changed.png');
+await ffmpeg(['-f','lavfi','-i','color=c=0x102840:s=1024x1536','-frames:v','1','-update','1',opaque]);
+for(const [file,color] of [[alpha,'red'],[changed,'green']])await ffmpeg(['-f','lavfi','-i',`color=c=${color}:s=300x900,format=rgba,pad=1024:1536:362:300:color=black@0`,'-frames:v','1','-update','1',file]);
+const plan={decision:'ready',product:{name:'محصول آزمایشی',confidence:.95,invariants:['retain exact visible label and package geometry']},question:'',uncertainties:[],direction:{description:'restrained product hero',palette:'cool navy with warm highlights',lighting:'coherent soft rim',background:'empty studio',contact:'soft contact shadow'},accents:[{id:'accent-back',label:'عنصر پشت',description:'a complete translucent graphic behind the subject'},{id:'accent-front',label:'عنصر جلو',description:'a small foreground accent'}]};
+let count=0;const check=(label,fn)=>{fn();count++;console.log('ok',label);};let imageCalls=0,jsonCalls=0,badQuality=false,repair=false;const imagePrompts=[];
+const vision=await prepareAdVisionImage(alpha);check('vision inputs composite alpha and stay bounded JPEGs',()=>{assert.equal(fs.readFileSync(vision)[0],255);assert(fs.statSync(vision).size<1024*1024);});
+const providers={image:async spec=>{imagePrompts.push(spec.prompt);const fixture=spec.transparent?(repair&&spec.prompt.includes('ONLY the subject layer')?changed:alpha):opaque;fs.copyFileSync(fixture,spec.output,fs.constants.COPYFILE_EXCL);imageCalls++;return {usage:null};},json:async spec=>{jsonCalls++;return {data:spec.system.startsWith('Review')?{identityPreserved:!badQuality,layersSeparated:true,depthCorrect:true,compositionCoherent:true,invalidLayers:badQuality?['subject']:[],reason:badQuality?'هویت محصول تغییر کرده.':''}:structuredClone(plan),usage:{total_tokens:12}};}};
+for(const [name,accent] of [['بستنی','frozen cream textures'],['کرم‌پودر','a grounded creamy material swatch'],['موبایل','geometric light accents'],['ظرف غذا','subtle warm atmosphere'],['کیسهٔ قهوه','details supported by the visible package']]){
+ const p=adPlanSchema.parse({...plan,product:{...plan.product,name},accents:[{id:'accent-back',label:'عنصر مناسب',description:accent}]});check(`schema/prompts preserve planner direction for ${name}`,()=>{assert(masterPrompt(p).includes(accent));assert(!masterPrompt(p).includes('cola'));assert.equal(layerSpecs(p).filter(l=>l.id.startsWith('accent')).length,1);});
+}
+check('unbounded or duplicate layer roles are rejected',()=>assert.throws(()=>adPlanSchema.parse({...plan,accents:[plan.accents[0],plan.accents[0]]})));
+check('clarification can leave art direction empty instead of inventing details',()=>assert(adPlanSchema.safeParse({...plan,decision:'clarify',product:{name:'نامشخص',confidence:.2,invariants:[]},question:'کدام محصول مدنظرته؟',direction:{description:'',palette:'',lighting:'',background:''},accents:[]}).success));
+const ambiguous=await designAd({source:opaque,dir:path.join(root,'ambiguous'),attempt:'first',...providers,json:async()=>({data:{...plan,decision:'clarify',product:{...plan.product,confidence:.2},question:'کدام محصول داخل عکس مدنظرته؟'}})});
+check('ambiguous identity stops before paid image generation',()=>{assert.equal(ambiguous.status,'clarify');assert.equal(imageCalls,0);});
+const designDir=path.join(root,'design'),stages=[];
+await designAd({source:opaque,dir:designDir,attempt:'first',...providers,onStage:s=>stages.push(s)});
+check('one source photo produces its own internal master',()=>{assert.equal(imageCalls,1);assert.equal(jsonCalls,1);assert.deepEqual(stages,['ad_understanding','ad_master']);});
+await designAd({source:opaque,dir:designDir,attempt:'first',...providers});check('completed design is reused without new requests',()=>{assert.equal(imageCalls,1);assert.equal(jsonCalls,1);});
+const assets=path.join(root,'layers'),scene=await deriveAdLayers({source:opaque,dir:assets,designDir,attempt:'first',...providers});
+check('layer jobs derive from raw + common master with explicit depth roles',()=>{assert.equal(scene.layers.length,5);assert.equal(imageCalls,6);assert.equal(jsonCalls,2);assert.deepEqual(scene.layers.map(l=>l.role),['background','contact','back','subject','front']);});
+await deriveAdLayers({source:opaque,dir:assets,designDir,attempt:'first',...providers});check('resume reuses valid layers and quality result',()=>{assert.equal(imageCalls,6);assert.equal(jsonCalls,2);});
+const beforeMotion={imageCalls,jsonCalls},priorDesign=JSON.parse(fs.readFileSync(path.join(designDir,'design.json')));
+await designAd({source:opaque,dir:designDir,attempt:'motion-feedback',previous:priorDesign.plan,...providers,json:async spec=>{jsonCalls++;return {data:{...priorDesign.plan,reuseArt:true,motion:{strength:.8,speed:.6}}};}});
+const moved=await deriveAdLayers({source:opaque,dir:assets,designDir,attempt:'motion-feedback',...providers});
+check('motion-only feedback reuses all image assets and the visual review',()=>{assert.equal(imageCalls,beforeMotion.imageCalls);assert.equal(jsonCalls,beforeMotion.jsonCalls+1);assert.equal(moved.motion.speed,.6);});
+const r=await animateAdLayers(assets,moved);const meta=await probe(path.join(assets,'out.mp4'));check('actual layered export is 6 seconds, 720p vertical and small',()=>{assert.equal(r.duration,6);assert.equal(meta.width,720);assert.equal(meta.height,1280);assert(fs.statSync(path.join(assets,'out.mp4')).size<5*1024*1024);});
+const badDir=path.join(root,'failed-quality');badQuality=true;await assert.rejects(deriveAdLayers({source:opaque,dir:badDir,designDir,attempt:'first',...providers}),error=>{assert.equal(error.code,'AD_QUALITY_REJECTED');assert(!error.publicMessage.includes('هویت'));return true;});
+check('semantic review failure blocks rendering and records the rejected role',()=>{assert.equal(JSON.parse(fs.readFileSync(path.join(badDir,'quality.json'))).invalidLayers[0],'subject');assert(!fs.existsSync(path.join(badDir,'out.mp4')));});
+const before=imageCalls;badQuality=false;repair=true;
+await deriveAdLayers({source:opaque,dir:badDir,designDir,attempt:'explicit-retry',...providers});check('explicit retry regenerates rejected subject only, then reviews changed assets',()=>assert.equal(imageCalls,before+1));
+check('repair uses the private review diagnosis, not a blind new generation',()=>assert(imagePrompts.at(-1).includes('هویت محصول تغییر کرده.')));
+await deriveAdLayers({source:opaque,dir:badDir,designDir,attempt:'resume-after-repair',...providers});check('corrected assets stay cached when the rejection is resolved',()=>assert.equal(imageCalls,before+1));
+let uncertainCalls=0;const uncertain=new AdSteps(path.join(root,'interrupted'),'first',{json:async()=>{uncertainCalls++;throw Error('timeout');}}),spec={system:'test',payload:{},images:[opaque]};
+await assert.rejects(uncertain.json('step',spec,z.object({})),/timeout/);await assert.rejects(uncertain.json('step',spec,z.object({})));check('an uncertain request never automatically spends again in the same attempt',()=>assert.equal(uncertainCalls,1));
+console.log(`${count} general ad checks passed; zero external calls`);

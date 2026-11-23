@@ -1,5 +1,5 @@
-// Mobile-first single-page app (no framework). Hash routes: #/login #/home #/wizard #/create #/history #/job/<id> #/settings
-// Videos never get uploaded: the phone grabs a few small frames with <canvas> and only those are sent.
+// Mobile-first template app. #/create selects a template; #/edit/<id> completes its input contract.
+// Media is uploaded resumably. AI receives sampled frames and speech, never the full video.
 
 // ---------------- state & helpers ----------------
 const S = { token: null, me: null, jobs: [], config: {}, seen: {}, draft: null, pick: [] };
@@ -18,7 +18,7 @@ const ago = (t) => {
 async function api(path, { method = "GET", body } = {}) {
   const res = await fetch(rel(path), {
     method,
-    headers: { "Content-Type": "application/json", ...(S.token ? { Authorization: "Bearer " + S.token } : {}) },
+    headers: { "Content-Type": "application/json", ...(S.token ? { "X-Creator-Token": S.token } : {}) },
     body: body && JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
@@ -100,24 +100,6 @@ function pickFiles(multiple = true) {
   });
 }
 
-// ---------------- wizard definition ----------------
-const STEPS = [
-  { key: "platform", title: "بیشتر کجا محتوا می‌ذاری؟", type: "one", options: ["اینستاگرام", "تیک‌تاک", "یوتیوب شورتز", "تلگرام", "لینکدین", "ایکس (توییتر)"] },
-  { key: "niche", title: "محتوات درباره‌ی چیه؟", type: "one", other: true,
-    options: ["آشپزی و غذا", "کافه و رستوران", "سفر", "مد و زیبایی", "ورزش و سلامتی", "تکنولوژی", "آموزشی", "کسب‌وکار و فروش", "طنز و سرگرمی", "سبک زندگی"] },
-  { key: "tone", title: "لحنت چطوریه؟", sub: "تا ۳ تا انتخاب کن", type: "multi", max: 3,
-    options: ["خودمونی", "شوخ و طنز", "صمیمی و آرام", "هیجانی", "الهام‌بخش", "آموزشی", "رسمی", "لاکچری", "رک و بی‌پرده"] },
-  { key: "language", title: "به چه زبونی بنویسم؟", type: "one", options: ["فارسی خودمونی", "فارسی رسمی", "انگلیسی", "فارسی + انگلیسی"] },
-  { key: "audience", title: "مخاطبت کیه؟", sub: "تا ۳ تا انتخاب کن", type: "multi", max: 3,
-    options: ["نوجوان‌ها", "جوان‌ها (۱۸ تا ۳۰)", "۳۰ تا ۴۵ ساله‌ها", "خانم‌ها", "آقایون", "پدر و مادرها", "صاحبان کسب‌وکار", "همه"] },
-  { key: "length", title: "کپشن‌ها چقدر باشه؟", type: "one", options: ["کوتاه", "متوسط", "بلند"],
-    hints: { "کوتاه": "یکی دو خط", "متوسط": "یه پاراگراف", "بلند": "داستان‌وار" } },
-  { key: "emoji", title: "ایموجی بذارم؟", type: "one", options: ["بدون ایموجی", "کم", "زیاد"] },
-  { key: "hashtags", title: "هشتگ چی؟", type: "one", options: ["بدون هشتگ", "چندتا (۳ تا ۵)", "زیاد (۱۰+)"] },
-  { key: "cta", title: "آخر پست چی بگم؟", type: "one", options: ["یه سؤال از مخاطب", "دعوت به سیو و اشتراک", "دعوت به خرید یا دایرکت", "هیچی"] },
-  { key: "samples", title: "چندتا از کارهای قبلیت رو بده", sub: "اختیاریه، ولی سبکت رو دقیق‌تر یاد می‌گیرم", type: "samples" },
-];
-
 // ---------------- views ----------------
 const views = {};
 
@@ -125,7 +107,7 @@ views.login = () => {
   let phone = "";
   const phoneStep = () => {
     $app.innerHTML = `
-      <div class="login-hero"><div class="logo">✦</div><h1>محتواساز</h1><p class="muted">از عکس و ویدیوهات، با سبک خودت، محتوا بساز</p></div>
+      <div class="login-hero"><div class="logo">✦</div><h1>محتواساز</h1><p class="muted">قالب انتخاب کن؛ با ویدیوهای خودت بساز</p></div>
       <form id="f" class="stack">
         <input id="phone" type="tel" inputmode="numeric" autocomplete="tel" placeholder="شماره موبایل  ۰۹۱۲…" class="ltr" required />
         <button class="btn" id="b">دریافت کد</button>
@@ -198,15 +180,14 @@ views.home = () => {
   // 1) what is being made now (its own card, so it is never mixed up with "make a new one")
   // 2) the one big button: a new reels (or the saved draft)  3) the latest finished ones
   $app.innerHTML = `
-    <div class="hello"><h1>سلام ${esc(S.me.name)} 👋</h1><p class="muted">${S.me.style ? "عکس یا ویدیو بده، بقیه‌ش با من." : "اول چندتا سؤال کوتاه می‌پرسم تا سبکت رو بشناسم."}</p></div>
+    <div class="hello"><h1>سلام ${esc(S.me.name)} 👋</h1><p class="muted">قالب رو انتخاب کن؛ قدم‌به‌قدم تکمیلش می‌کنیم.</p></div>
     ${planBlocked() ? `<div class="card notice">حسابت هنوز فعال نشده. وقتی مدیر برات پلن فعال کنه، می‌تونی محتوا بسازی.</div>` : ""}
     ${running.length ? `<div class="card making"><div class="making-title"><span class="spinner dark"></span> در حال ساخت (${fa(running.length)})</div>
       ${running.map(jobRow).join("")}
       <p class="muted hint" style="margin:8px 0 0">لازم نیست اینجا بمونی؛ آماده شد خبرت می‌کنم.</p></div>` : ""}
-    <div class="big-wrap${running.length ? " compact" : ""}"><button class="big" id="go"><span>${hasDraft() ? "📝" : "＋"}</span>${hasDraft() ? "ادامه‌ی پیش‌نویس" : "ساخت ریلز جدید"}</button></div>
-    ${hasDraft() ? `<p class="muted center" style="margin-top:-6px">پیش‌نویس ذخیره‌شده: ${S.pick.length ? `${fa(S.pick.length)} فایل` : "فقط متن"}</p>` : ""}
+    <div class="big-wrap${running.length ? " compact" : ""}"><button class="big" id="go"><span>＋</span>ساخت ریلز جدید</button></div>
     ${recent.length ? `<div class="section-title">آخرین‌ها <a class="link" href="#/history">همه</a></div>${recent.map(jobRow).join("")}` : ""}`;
-  document.getElementById("go").onclick = () => go(S.me.style ? "#/create" : "#/wizard");
+  document.getElementById("go").onclick = () => go("#/create");
 };
 
 const planBlocked = () => !S.me.admin && S.me.plan && S.me.plan.reelsPerDay === 0 && S.me.plan.postsPerDay === 0;
@@ -223,98 +204,6 @@ function jobRow(j) {
   const first = j.output?.caption?.split("\n").find(Boolean) || j.brief || KIND[j.kind];
   const busy = j.status === "queued" || j.status === "running" || j.status === "uploading";
   return `<a class="job${busy ? " busy" : ""}" href="#/job/${j.id}"><img src="${thumbOf(j)}" loading="lazy"><div class="info"><div class="line1">${esc(first)}</div><div class="line2">${busy ? label + " · " : ""}${ago(j.createdAt)}</div>${busy ? '<div class="indet"><i></i></div>' : ""}</div>${busy ? "" : `<span class="status ${j.status}">${label}</span>`}</a>`;
-}
-
-views.wizard = (params) => {
-  const editing = params === "edit";
-  if (!S.draft) S.draft = JSON.parse(JSON.stringify(S.me.style || { tone: [], audience: [], description: "" }));
-  let i = 0;
-  const d = S.draft;
-
-  const render = () => {
-    const st = STEPS[i];
-    const pct = Math.round(((i + 1) / STEPS.length) * 100);
-    let body = "";
-    if (st.type === "one" || st.type === "multi") {
-      const sel = st.type === "multi" ? d[st.key] || [] : [d[st.key]];
-      const opts = [...st.options];
-      if (st.other && d[st.key] && !opts.includes(d[st.key])) opts.push(d[st.key]);
-      body = `<div class="chips">${opts.map((o) => `<button class="chip ${sel.includes(o) ? "on" : ""}" data-v="${esc(o)}">${esc(o)}${st.hints?.[o] ? `<small>${st.hints[o]}</small>` : ""}</button>`).join("")}
-        ${st.other ? `<button class="chip" data-other="1">سایر…</button>` : ""}</div>`;
-    } else {
-      body = `
-        <div class="picker" id="addS"><div class="ic">🖼️</div><b>انتخاب عکس و ویدیو</b><span class="muted">۳ تا ۶ تا کافیه</span></div>
-        <div class="grid" id="sg">${sampleTiles()}</div>
-        <h3 style="margin-top:16px">توضیح (اختیاری)</h3>
-        <textarea id="desc" rows="3" placeholder="هر چیزی که باید درباره‌ی سبکت بدونم… مثلاً همیشه آخر پست می‌گم «نظرتون؟»">${esc(d.description || "")}</textarea>`;
-    }
-    const canNext = st.type === "multi" ? (d[st.key] || []).length > 0 : st.type === "samples" || Boolean(d[st.key]);
-    $app.innerHTML = `
-      <div class="topbar"><button class="back" id="bk">→</button><div class="title">${editing ? "ویرایش سبک" : "سبک تو"}</div><span class="muted">${fa(i + 1)} از ${fa(STEPS.length)}</span></div>
-      <div class="progress"><div style="width:${pct}%"></div></div>
-      <h1>${st.title}</h1>${st.sub ? `<p class="muted">${st.sub}</p>` : "<p></p>"}
-      ${body}
-      <div class="spacer"></div>
-      ${st.type !== "one" || editing ? `<div class="bottom-bar"><button class="btn" id="nx" ${canNext ? "" : "disabled"}>${i === STEPS.length - 1 ? "تموم شد ✓" : "بعدی"}</button></div>` : ""}`;
-
-    document.getElementById("bk").onclick = () => (i > 0 ? (i--, render()) : (S.draft = null, history.back()));
-    document.querySelectorAll(".chip[data-v]").forEach((b) => (b.onclick = () => {
-      const v = b.dataset.v;
-      if (st.type === "one") { d[st.key] = v; render(); if (!editing) setTimeout(next, 180); }
-      else {
-        const arr = d[st.key] || (d[st.key] = []);
-        const k = arr.indexOf(v);
-        if (k >= 0) arr.splice(k, 1); else if (arr.length < st.max) arr.push(v); else return toast(`حداکثر ${fa(st.max)} تا`);
-        render();
-      }
-    }));
-    const other = document.querySelector("[data-other]");
-    if (other) other.onclick = () => { const v = prompt("حوزه‌ی محتوات چیه؟"); if (v && v.trim()) { d[st.key] = v.trim().slice(0, 50); render(); if (!editing) setTimeout(next, 180); } };
-    const nx = document.getElementById("nx");
-    if (nx) nx.onclick = next;
-    if (st.type === "samples") {
-      document.getElementById("addS").onclick = addSamples;
-      document.getElementById("desc").oninput = (e) => (d.description = e.target.value);
-      bindSampleDelete(render);
-    }
-  };
-
-  const next = async () => {
-    if (i < STEPS.length - 1) { i++; return render(); }
-    try {
-      busy("nx", true);
-      S.me = await api("/api/style", { method: "PUT", body: d });
-      S.draft = null;
-      toast("سبکت ذخیره شد ✓", { type: "ok" });
-      go(editing ? "#/settings" : "#/create");
-    } catch (err) { toast(err.message, { type: "err" }); busy("nx", false); }
-  };
-
-  async function addSamples() {
-    const files = await pickFiles(true);
-    if (!files.length) return;
-    const grid = document.getElementById("sg");
-    for (const f of files) {
-      const ph = document.createElement("div");
-      ph.className = "tile loading";
-      grid?.append(ph);
-      try {
-        const frames = await fileFrames(f, "sample");
-        S.me = await api("/api/samples", { method: "POST", body: { kind: f.type.startsWith("video/") ? "video" : "image", frames } });
-      } catch (err) { toast(err.message, { type: "err" }); }
-    }
-    render();
-  }
-  render();
-};
-
-const sampleTiles = () =>
-  S.me.samples.map((s) => `<div class="tile"><img src="${rel(s.frames[0])}"><button class="x" data-del="${s.id}">✕</button>${s.kind === "video" ? '<span class="k">ویدیو</span>' : ""}</div>`).join("");
-function bindSampleDelete(after) {
-  document.querySelectorAll("[data-del]").forEach((b) => (b.onclick = async () => {
-    S.me = await api("/api/samples/" + b.dataset.del, { method: "DELETE" });
-    after();
-  }));
 }
 
 // ---------- voice input: a mic button that records, sends the audio, and adds the text to a textarea ----------
@@ -349,7 +238,7 @@ function wireMics(onText = () => {}) {
         if (Date.now() - started < 800) return idle(); // a tap, not a recording
         btn.classList.replace("rec", "busy"); btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>'; ta.placeholder = "دارم صدات رو به متن تبدیل می‌کنم…";
         try {
-          const res = await fetch(rel("/api/voice"), { method: "POST", headers: { "Content-Type": blob.type, Authorization: "Bearer " + S.token }, body: blob });
+          const res = await fetch(rel("/api/voice"), { method: "POST", headers: { "Content-Type": blob.type, "X-Creator-Token": S.token }, body: blob });
           const data = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(data.error || "تبدیل صدا ناموفق بود");
           ta.value = (ta.value.trim() ? ta.value.trim() + " " : "") + data.text;
@@ -380,12 +269,12 @@ const dataUrlToBlob = (u) => fetch(u).then((r) => r.blob());
 // file again (retry, reload, a failed reel) skips what was sent before, or the whole file.
 const CHUNK = 4 * 1024 * 1024;
 const STALL_MS = 25000; // no bytes moving for 25s (screen locked, app in background, Wi-Fi drop) → abort and go on
-async function fingerprint(blob) {
+async function fingerprint(blob,ctl) {
   const S1 = 1024 * 1024, n = blob.size;
   const parts = n <= 3 * S1 ? [blob] : [blob.slice(0, S1), blob.slice(Math.floor(n / 2), Math.floor(n / 2) + S1), blob.slice(n - S1)];
   let h1 = 0xdeadbeef ^ n, h2 = 0x41c6ce57 ^ (blob.lastModified || 0);
   for (const p of parts) {
-    const b = new Uint8Array(await p.arrayBuffer());
+    const b = new Uint8Array(await UploadIO.read(p,ctl));
     for (let i = 0; i < b.length; i++) { h1 = Math.imul(h1 ^ b[i], 2654435761); h2 = Math.imul(h2 ^ b[i], 1597334677); }
   }
   h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
@@ -395,8 +284,8 @@ async function fingerprint(blob) {
 // cancel: ctl.cancel() stops the chunk in flight and any wait; uploadResumable then throws {cancelled: true}.
 // What already reached the server is kept, so picking the same file later goes on from there.
 const uploadCtl = () => {
-  const c = { cancelled: false, xhr: null, wake: null, fail: null };
-  c.cancel = () => { c.cancelled = true; c.xhr?.abort(); c.fail?.(CANCELLED()); c.wake?.(); };
+  const c = { cancelled: false, xhr: null, reader: null, wake: null, fail: null };
+  c.cancel = () => { c.cancelled = true; c.fail?.(CANCELLED()); c.reader?.abort(); c.xhr?.abort(); c.wake?.(); };
   return c;
 };
 const CANCELLED = () => Object.assign(new Error("cancelled"), { cancelled: true });
@@ -409,7 +298,7 @@ function putChunk(id, offset, blob, onProgress, ctl) {
     let watchdog;
     const arm = () => { clearTimeout(watchdog); watchdog = setTimeout(() => { x.abort(); bad(Object.assign(new Error("stalled"), { retry: true })); }, STALL_MS); };
     x.open("PUT", rel("/api/uploads/" + id));
-    x.setRequestHeader("Authorization", "Bearer " + S.token);
+    x.setRequestHeader("X-Creator-Token", S.token);
     x.setRequestHeader("Content-Type", "application/octet-stream");
     x.setRequestHeader("Upload-Offset", String(offset));
     x.upload.onprogress = (e) => { arm(); onProgress(e.loaded); };
@@ -429,7 +318,7 @@ const sleep = (ms, ctl) => new Promise((r) => { const t = setTimeout(r, ms); if 
 /** → upload id. onProgress(bytes of this file on the server so far), onRetry(n) while the connection is down. */
 async function uploadResumable(blob, onProgress, onRetry, ctl = uploadCtl()) {
   const stop = () => { if (ctl.cancelled) throw CANCELLED(); };
-  const key = await fingerprint(blob);
+  const key = await fingerprint(blob,ctl);
   stop();
   let u = await api("/api/uploads", { method: "POST", body: { key, size: blob.size } });
   stop();
@@ -510,148 +399,6 @@ async function draftLoad() {
 }
 const hasDraft = () => S.pick.length > 0 || !!(S.brief || "").trim();
 
-views.create = () => {
-  if (!S.me.style) return go("#/wizard");
-  const P = S.pick; // [{id, file, kind, frames|null}]
-  S.mode ||= "separate";
-  S.out ||= "reel"; // photos: "reel" (default) or "text"
-  S.len ||= "auto"; // reel length: "auto" (the brief / the material decides) or 15 / 30 / 60 s
-  let uploading = false;
-  const render = () => {
-    const hasVideo = P.some((p) => p.kind === "video");
-    const asReel = hasVideo || S.out === "reel";
-    const ready = P.length && P.every((p) => p.frames) && !uploading;
-    const label = asReel ? "✦ ساخت ریلز" : `✦ تولید ${P.length > 1 && S.mode === "separate" ? `${fa(P.length)} پست` : ""}`;
-    $app.innerHTML = `
-      <div class="topbar"><button class="back" id="bk">→</button><div class="title">ریلز جدید</div></div>
-      ${S.jobs.some((j) => j.status === "queued" || j.status === "running") ? `<div class="card running-note">⏳ ${fa(S.jobs.filter((j) => j.status === "queued" || j.status === "running").length)} ریلز داره ساخته می‌شه؛ تو صفحه‌ی خانه می‌بینیش. اینجا یه ریلز <b>جدید</b> می‌سازی.</div>` : ""}
-      <div class="picker" id="add"><div class="ic">📷</div><b>${P.length ? "افزودن فایل دیگه" : "انتخاب عکس یا ویدیو"}</b><span class="muted">می‌تونی چندتا با هم انتخاب کنی</span></div>
-      ${hasDraft() && !uploading ? `<div style="text-align:center;margin-top:8px"><a class="link" id="reset" href="javascript:void 0">🗑 پاک کردن همه و شروع از نو</a></div>` : ""}
-      ${P.length ? `<div class="grid">${P.map((p) => `<div class="tile ${p.frames ? "" : "loading"}" data-tile="${p.id}">${p.frames ? `<img src="${p.frames[0]}">` : ""}<button class="x" data-rm="${p.id}">✕</button>${p.kind === "video" ? '<span class="k">ویدیو</span>' : ""}</div>`).join("")}</div>` : ""}
-      ${P.length && !hasVideo ? `<h3 style="margin-top:16px">خروجی</h3><div class="seg"><button data-o="reel" class="${S.out === "reel" ? "on" : ""}">🎬 ریلز ویدیویی</button><button data-o="text" class="${S.out === "text" ? "on" : ""}">📝 فقط متن</button></div>` : ""}
-      ${asReel && P.length ? `<p class="muted" style="margin-top:12px">🎬 ${P.length > 1 ? "همه با هم یه ریلز می‌شن" : hasVideo ? "ویدیوت ادیت می‌شه" : "عکست ریلز می‌شه"}: ${hasVideo ? "بهترین تیکه‌ها، متن فارسی، زیرنویس حرف‌ها" : "حرکت آروم روی عکس، متن فارسی"}، قالب عمودی و کاور.</p>`
-        : P.length > 1 ? `<h3 style="margin-top:16px">این ${fa(P.length)} عکس…</h3><div class="seg"><button data-m="separate" class="${S.mode === "separate" ? "on" : ""}">هر کدوم یه پست جدا</button><button data-m="carousel" class="${S.mode === "carousel" ? "on" : ""}">همه با هم یه پست</button></div>` : ""}
-      ${asReel && P.length ? `<h3 style="margin-top:16px">طول ریلز</h3><div class="seg">${[["auto", "خودکار"], ["15", "۱۵ ثانیه"], ["30", "۳۰ ثانیه"], ["60", "۶۰ ثانیه"]].map(([v, t]) => `<button data-len="${v}" class="${S.len === v ? "on" : ""}">${t}</button>`).join("")}</div>` : ""}
-      <h3 style="margin-top:16px">توضیح بیشتر (اختیاری)</h3>
-      ${voiceArea("brief", 'rows="4" maxlength="1500" placeholder="هر چی بیشتر بگی، بهتر می‌شه: موضوع و هدف، مخاطب، پیام اصلی، چیزی که حتماً باشه یا نباشه، دعوت به اقدام… مثلاً: معرفی کفش جدید برای خانم‌های جوون، تخفیف ۲۰٪ تا جمعه، آخرش بگه دایرکت بدید."', S.brief || "")}
-      ${canVoice() ? '<p class="muted hint">می‌تونی تایپ کنی، یا میکروفون توی کادر رو بزنی و بگی.</p>' : ""}
-      <div class="spacer"></div>
-      <div class="bottom-bar"><button class="btn" id="gen" ${ready ? "" : "disabled"}>${label}</button></div>`;
-    document.getElementById("bk").onclick = () => !uploading && go("#/home");
-    document.getElementById("add").onclick = () => !uploading && add();
-    document.getElementById("brief").oninput = (e) => { S.brief = e.target.value; draftSaveFields(); };
-    wireMics();
-    document.getElementById("reset")?.addEventListener("click", () => {
-      if (uploading || !confirm("همه‌ی فایل‌ها و نوشته‌ها پاک بشن؟")) return;
-      P.length = 0; S.brief = ""; S.len = "auto"; S.out = "reel"; S.mode = "separate";
-      draftClear(); render();
-    });
-    document.querySelectorAll("[data-rm]").forEach((b) => (b.onclick = () => { if (uploading) return; P.splice(P.findIndex((p) => p.id === b.dataset.rm), 1); draftDropFile(b.dataset.rm); draftSaveFields(); render(); }));
-    document.querySelectorAll("[data-m]").forEach((b) => (b.onclick = () => { S.mode = b.dataset.m; draftSaveFields(); render(); }));
-    document.querySelectorAll("[data-o]").forEach((b) => (b.onclick = () => { S.out = b.dataset.o; draftSaveFields(); render(); }));
-    document.querySelectorAll("[data-len]").forEach((b) => (b.onclick = () => { S.len = b.dataset.len; draftSaveFields(); render(); }));
-    document.getElementById("gen").onclick = () => (asReel ? submitReel() : submitPosts());
-  };
-  const rerender = () => location.hash === "#/create" && !uploading && render();
-  // video: only a thumbnail here (the whole file is uploaded and cut on the server); photo: shrink in the phone
-  const makeFrames = (p) => {
-    p.busy = true;
-    (p.kind === "video" ? videoFrames(p.file, 1, 240).catch(() => [VIDEO_THUMB]) : fileFrames(p.file, "post"))
-      .then((fr) => { p.frames = fr; p.busy = false; draftSaveFields(); rerender(); })
-      .catch((err) => { draftDropFile(p.id); toast(isUnreadable(err) ? "این فایل خونده نشد (شاید هنوز کامل روی گوشی نیومده). یه بار بازش کن و دوباره انتخابش کن." : err.message, { type: "err" }); P.splice(P.indexOf(p), 1); draftSaveFields(); rerender(); });
-  };
-  async function add() {
-    const files = await pickFiles(true);
-    for (const f of files) {
-      const p = { id: Math.random().toString(36).slice(2), kind: f.type.startsWith("video/") ? "video" : "image", file: f, frames: null };
-      P.push(p);
-      draftSaveFile(p);
-      draftSaveFields();
-      render();
-      makeFrames(p);
-    }
-  }
-  P.forEach((p) => !p.frames && !p.busy && makeFrames(p)); // restored from a draft before its frames were ready
-  async function submitPosts() {
-    const posts = P.length > 1 && S.mode === "carousel" ? [{ kind: "carousel", frames: P.flatMap((p) => p.frames).slice(0, 6) }] : P.map((p) => ({ kind: p.kind, frames: p.frames }));
-    busy("gen", true);
-    try {
-      for (const post of posts) {
-        const j = await api("/api/jobs", { method: "POST", body: { ...post, brief: S.brief || "" } });
-        S.jobs.unshift(j); S.seen[j.id] = j.status;
-      }
-      S.pick = []; S.brief = ""; draftClear();
-      toast(posts.length > 1 ? `${fa(posts.length)} پست رفت تو صف تولید. آماده شد خبرت می‌کنم.` : "رفت تو صف تولید. آماده شد خبرت می‌کنم.");
-      startPolling();
-      go("#/home");
-    } catch (err) { toast(err.message, { type: "err" }); busy("gen", false); }
-  }
-  async function submitReel() {
-    const btn = document.getElementById("gen");
-    uploading = true;
-    btn.disabled = true;
-    let job = null, current = -1;
-    const ctl = uploadCtl();
-    document.getElementById("reset")?.parentElement.remove(); // no "start over" while sending
-    btn.insertAdjacentHTML("afterend", '<button class="btn ghost" id="cancel-up" style="margin-top:8px">لغو آپلود</button>');
-    document.getElementById("cancel-up").onclick = () => ctl.cancel();
-    try {
-      btn.innerHTML = '<span class="spinner"></span> آماده‌سازی…';
-      const blobs = await Promise.all(P.map(async (p) => (p.kind === "video" ? p.file : dataUrlToBlob((await imageFrames(p.file, 1280))[0]))));
-      const totalBytes = blobs.reduce((a, b) => a + b.size, 0);
-      let done = 0, pct = 0, sent = 0;
-      const ids = [];
-      // each file's own progress, over its tile: percent, sent of total, what is left
-      const tile = (i, state, got = 0) => {
-        const el = document.querySelector(`[data-tile="${P[i].id}"]`);
-        if (!el) return;
-        let up = el.querySelector(".up");
-        if (!up) { up = document.createElement("div"); el.appendChild(up); }
-        const size = blobs[i].size, p = Math.floor((got / size) * 100);
-        up.className = "up" + (state === "done" ? " ok" : state === "wait" ? " wait" : "");
-        up.innerHTML = state === "done" ? "<b>✓</b>آپلود شد"
-          : state === "wait" ? `<b>در صف</b>${mb(size)} مگ`
-          : `<b>${fa(p)}٪</b><span>${mb(got)} از ${mb(size)} مگ</span><span>${state === "retry" ? "قطع شد، ادامه می‌دم…" : `${mb(size - got)} مگ مونده`}</span><div class="bar"><i style="width:${p}%"></i></div>`;
-      };
-      blobs.forEach((_, i) => tile(i, "wait"));
-      // two lines on the button: the state, then the sizes
-      const show = (line) => (btn.innerHTML = `<span class="spinner"></span><span style="display:flex;flex-direction:column;line-height:1.35;margin-inline-start:8px">${line}<small style="opacity:.8;font-weight:400">${mb(sent)} از ${mb(totalBytes)} مگابایت${blobs.length > 1 ? ` · ${fa(blobs.length)} فایل` : ""}</small></span>`);
-      for (let i = 0; i < blobs.length; i++) {
-        current = i;
-        ids.push(await uploadResumable(
-          blobs[i],
-          (got) => { sent = done + got; pct = Math.floor((sent / totalBytes) * 100); tile(i, "up", got); show(`آپلود ${fa(pct)}٪ — صفحه رو باز نگه دار`); },
-          () => { tile(i, "retry", sent - done); show(`اتصال قطع شد (${fa(pct)}٪)، ادامه می‌دم…`); },
-          ctl
-        ));
-        done += blobs[i].size;
-        tile(i, "done");
-      }
-      current = -1;
-      if (ctl.cancelled) throw CANCELLED();
-      document.getElementById("cancel-up")?.remove(); // past this point the reel is being made
-      job = await api("/api/reels", { method: "POST", body: { brief: S.brief || "", length: S.len === "auto" ? null : +S.len, files: P.map((p, i) => ({ type: p.kind, upload: ids[i] })) } });
-      const j = await api(`/api/reels/${job.id}/start`, { method: "POST" });
-      S.jobs.unshift(j); S.seen[j.id] = j.status;
-      S.pick = []; S.brief = ""; uploading = false; draftClear();
-      toast("آپلود شد. دارم ادیتش می‌کنم، آماده شد خبرت می‌کنم 🎬");
-      startPolling();
-      go("#/home");
-    } catch (err) {
-      uploading = false;
-      if (job) api("/api/jobs/" + job.id, { method: "DELETE" }).catch(() => {}); // drop the half-uploaded job
-      if (err.cancelled) toast("آپلود لغو شد. اگه دوباره بزنی، از همون‌جا که مونده ادامه می‌ده.");
-      else if (isUnreadable(err)) {
-        // that file can't be read any more → take it out; picking it again goes on from what was already sent
-        if (current >= 0 && P[current]) { draftDropFile(P[current].id); P.splice(current, 1); draftSaveFields(); }
-        toast("دسترسی به فایل قطع شد (شاید هنوز کامل روی گوشی نیومده یا برنامه مدتی پس‌زمینه بوده). دوباره انتخابش کن؛ از همون‌جا که مونده ادامه می‌ده.", { type: "err", ms: 9000 });
-      } else toast(err.message, { type: "err", ms: 7000 });
-      render(); // the picked files stay selected, so one tap tries again
-    }
-  }
-  render();
-};
-
 views.history = () => {
   $app.innerHTML = `<h1>محتواهای من</h1><p></p>${S.jobs.length ? S.jobs.map(jobRow).join("") : '<div class="empty">هنوز چیزی نساختی.<br><a class="link" href="#/create">تولید اولین محتوا</a></div>'}`;
 };
@@ -661,7 +408,7 @@ views.job = (id) => {
   if (!j) return go("#/history");
   const o = j.output;
   const top = `<div class="topbar"><button class="back" id="bk">→</button><div class="title">${KIND[j.kind]}</div><span class="status ${j.status}">${statusLabel(j)}</span></div>
-    ${j.kind === "reel" ? (j.video && j.status === "done" ? `<video class="reel" src="${rel(j.video)}" poster="${rel(j.coverImg)}" controls playsinline preload="metadata"></video>
+    ${j.kind === "reel" ? (j.video && j.status === "done" ? `${MediaUI.video(rel(j.video))}
       <div class="dl"><a class="btn" href="${rel(j.video)}" download="reel-${j.id}.mp4">⬇ دانلود ویدیو</a><a class="btn ghost" href="${rel(j.coverImg)}" download="cover-${j.id}.jpg">⬇ کاور</a></div>
       <div class="muted center" style="font-size:.8rem">${RECIPE_FA[j.output?.recipe] ? `قالب ${RECIPE_FA[j.output.recipe]} · ` : ""}${fa(j.output?.duration || 0)} ثانیه${j.output?.subtitles ? " · زیرنویس کلمه‌به‌کلمه" : ""}${j.output?.jumpCuts ? ` · ${fa(j.output.jumpCuts)} جامپ‌کات` : ""}${j.output?.music ? ` · موزیک ${esc(j.output.music.mood)}` : ""}${j.output?.look && j.output.look !== "natural" ? ` · رنگ ${esc(j.output.look)}` : ""}${j.output?.transitions?.length ? ` · ${fa(j.output.transitions.length)} ترنزیشن` : ""}${j.output?.smartCrop ? " · کراپ هوشمند" : ""}${j.output?.colorFixed ? " · اصلاح رنگ" : ""}</div>`: `<div class="strip"><img src="${thumbOf(j)}"></div>`)
       : `<div class="strip">${j.frames.map((f) => `<img src="${rel(f)}">`).join("")}</div>`}`;
@@ -692,6 +439,7 @@ views.job = (id) => {
     body = `<div class="block center"><span class="spinner dark"></span><p class="muted" style="margin-top:8px">دارم می‌نویسم… می‌تونی بری جاهای دیگه، آماده شد خبرت می‌کنم.</p></div>`;
   }
   $app.innerHTML = `<div class="result">${top}${body}</div>`;
+  MediaUI.bind($app);
   document.getElementById("bk").onclick = () => history.length > 1 ? history.back() : go("#/history");
   document.querySelectorAll("[data-copy]").forEach((b) => (b.onclick = () => copyText(b.dataset.copy)));
   const del = document.getElementById("del");
@@ -727,93 +475,7 @@ views.job = (id) => {
   }
 };
 
-// logo → PNG (keeps transparency), max 512 px
-function toPng(file, max = 512) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => {
-      const s = Math.min(1, max / Math.max(img.width, img.height));
-      const c = document.createElement("canvas");
-      c.width = Math.round(img.width * s);
-      c.height = Math.round(img.height * s);
-      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-      URL.revokeObjectURL(img.src);
-      resolve(c.toDataURL("image/png"));
-    };
-    img.onerror = reject;
-    img.src = URL.createObjectURL(file);
-  });
-}
-const RECIPE_FA = { cinematic: "سینمایی", quiz: "کوییز", list: "لیستی", "before-after": "قبل و بعد", tutorial: "آموزشی", story: "داستانی", hook: "مشکل و راه‌حل", promo: "معرفی", talk: "صحبت" };
-const BRAND_COLORS = ["#FFD400", "#FF3B6B", "#00D1FF", "#7CFF4F", "#B266FF", "#FF8A00", "#FFFFFF"];
-
-views.settings = (fresh) => {
-  if (fresh !== true) api("/api/me").then((me) => { S.me = me; if (location.hash.startsWith("#/settings")) views.settings(true); }).catch(() => {});
-  const st = S.me.style;
-  const u = S.me.usage || { tokens: 0 };
-  $app.innerHTML = `
-    <h1>تنظیمات</h1><p></p>
-    <div class="card">
-      <div class="row"><span>اسم</span><button class="link" id="nm">${esc(S.me.name)} ✎</button></div>
-      <div class="row"><span>موبایل</span><span class="v">${fa(S.me.phone)}</span></div>
-    </div>
-    <div class="section-title">سبک من <button class="btn small" id="edit">ویرایش</button></div>
-    <div class="card">${st ? [
-      ["پلتفرم", st.platform], ["حوزه", st.niche], ["لحن", st.tone.join("، ")], ["زبان", st.language], ["مخاطب", st.audience.join("، ")],
-      ["طول کپشن", st.length], ["ایموجی", st.emoji], ["هشتگ", st.hashtags], ["پایان پست", st.cta], ["توضیح", st.description || "—"],
-    ].map(([k, v]) => `<div class="row"><span>${k}</span><span class="v">${esc(v)}</span></div>`).join("") : '<div class="empty">هنوز سبکی تعریف نکردی.</div>'}</div>
-    <div class="section-title">برند من</div>
-    <div class="card" id="brand">
-      <div class="row"><span>رنگ اصلی</span><div class="swatches">${BRAND_COLORS.map((c) => `<button class="sw ${(S.me.brand?.color || "#FFD400").toUpperCase() === c ? "on" : ""}" data-c="${c}" style="background:${c}" aria-label="${c}"></button>`).join("")}</div></div>
-      <div class="row"><span>آیدی پیج</span><button class="link" id="hd">${S.me.brand?.handle ? `<bdi dir="ltr">${esc(S.me.brand.handle)}</bdi>` : "تنظیم نشده"} ✎</button></div>
-      <div class="row"><span>لوگو</span><span class="logo-row">${S.me.brand?.logo ? `<img src="${rel(S.me.brand.logo)}" class="logo" alt="">` : ""}<button class="link" id="lg">${S.me.brand?.logo ? "عوض کن" : "آپلود"}</button></span></div>
-      <label class="row"><span>کارت پایانی (لوگو، آیدی، دعوت به فالو)</span><input type="checkbox" id="ou" ${S.me.brand?.outro ? "checked" : ""}></label>
-      <label class="row"><span>لوگوی کوچیک گوشه‌ی ویدیو</span><input type="checkbox" id="wm" ${S.me.brand?.watermark ? "checked" : ""}></label>
-    </div>
-    <div class="section-title">نمونه‌کارها <button class="btn small" id="addS">افزودن</button></div>
-    <div class="grid" id="sg">${sampleTiles() || '<p class="muted">نمونه‌کاری نیست.</p>'}</div>
-    <div class="section-title">پلن و مصرف</div>
-    <div class="card">${S.me.admin ? '<div class="row"><span>پلن</span><span class="v">مدیر (بدون محدودیت)</span></div>' : S.me.plan ? `
-      <div class="row"><span>پلن</span><span class="v">${esc(S.me.plan.name)}${S.me.plan.until ? ` · تا ${faDate(S.me.plan.until)}` : ""}</span></div>
-      <div class="row"><span>ریلز امروز</span><span class="v">${limitText(S.me.plan.used.reelsToday, S.me.plan.reelsPerDay)}</span></div>
-      <div class="row"><span>ریلز ۳۰ روز اخیر</span><span class="v">${limitText(S.me.plan.used.reelsMonth, S.me.plan.reelsPerMonth)}</span></div>
-      <div class="row"><span>پست امروز</span><span class="v">${limitText(S.me.plan.used.postsToday, S.me.plan.postsPerDay)}</span></div>` : ""}
-      <div class="row"><span>کل توکن مصرف‌شده</span><span class="v">${fa((u.tokens || 0).toLocaleString())}</span></div></div>
-    ${S.me.admin ? '<a class="btn" href="#/admin" style="margin-top:16px">پنل مدیریت</a>' : ""}
-    <button class="btn ghost" id="out" style="margin-top:20px">خروج از حساب</button>`;
-  document.getElementById("edit").onclick = () => { S.draft = null; go("#/wizard/edit"); };
-  document.getElementById("nm").onclick = async () => {
-    const n = prompt("اسمت:", S.me.name);
-    if (n && n.trim()) { S.me = await api("/api/me", { method: "PUT", body: { name: n } }); views.settings(); }
-  };
-  document.getElementById("addS").onclick = async () => {
-    for (const f of await pickFiles(true)) {
-      try { S.me = await api("/api/samples", { method: "POST", body: { kind: f.type.startsWith("video/") ? "video" : "image", frames: await fileFrames(f, "sample") } }); views.settings(); }
-      catch (err) { toast(err.message, { type: "err" }); }
-    }
-  };
-  bindSampleDelete(views.settings);
-  // brand kit
-  const saveBrand = async (patch) => {
-    const b = { color: "#FFD400", handle: "", outro: false, watermark: false, ...(S.me.brand || {}), ...patch };
-    try { S.me = await api("/api/brand", { method: "PUT", body: b }); views.settings(); toast("ذخیره شد"); }
-    catch (err) { toast(err.message, { type: "err" }); }
-  };
-  document.querySelectorAll(".sw").forEach((b) => (b.onclick = () => saveBrand({ color: b.dataset.c })));
-  document.getElementById("hd").onclick = () => {
-    const h = prompt("آیدی پیجت (مثلاً ‎@mypage):", S.me.brand?.handle || "");
-    if (h !== null) saveBrand({ handle: h.trim() });
-  };
-  document.getElementById("ou").onchange = (e) => saveBrand({ outro: e.target.checked });
-  document.getElementById("wm").onchange = (e) => saveBrand({ watermark: e.target.checked });
-  document.getElementById("lg").onclick = async () => {
-    const [f] = await pickFiles(false);
-    if (!f) return;
-    try { S.me = await api("/api/brand/logo", { method: "POST", body: { dataUrl: await toPng(f) } }); views.settings(); toast("لوگو ذخیره شد"); }
-    catch (err) { toast(err.message, { type: "err" }); }
-  };
-  document.getElementById("out").onclick = async () => { await api("/api/auth/logout", { method: "POST" }).catch(() => {}); setToken(null); S.me = null; S.jobs = []; S.pick = []; S.brief = ""; draftClear(); go("#/login"); };
-};
+const RECIPE_FA = { "product-presenter": "معرفی محصول", cinematic: "سینمایی", quiz: "کوییز", list: "لیستی", "before-after": "قبل و بعد", tutorial: "آموزشی", story: "داستانی", hook: "مشکل و راه‌حل", promo: "معرفی", talk: "صحبت" };
 
 // ---------------- admin: users ↔ plans, the plans themselves (only for ADMIN_PHONE) ----------------
 const LIMIT_FA = { reelsPerDay: "ریلز در روز", reelsPerMonth: "ریلز در ۳۰ روز", postsPerDay: "پست در روز" };
@@ -916,6 +578,8 @@ function updateBadge() {
   a.innerHTML = `<span class="ic">⌂${n ? `<i class="badge">${fa(n)}</i>` : ""}</span>خانه`; // the count sits on the icon corner
 }
 
+window.installTemplateFlow({ views, S, $app, api, esc, fa, go, rel, toast, uploadResumable, uploadCtl, draftClear, setToken, startPolling });
+
 // ---------------- router ----------------
 function busy(id, on) {
   const b = document.getElementById(id);
@@ -943,7 +607,6 @@ window.addEventListener("hashchange", route);
       S.me = await api("/api/me");
       S.jobs = await api("/api/jobs");
       S.jobs.forEach((j) => (S.seen[j.id] = j.status));
-      await draftLoad();
       poll();
     } catch { setToken(null); }
   }

@@ -1,0 +1,10 @@
+import {expect,it} from 'vitest';
+import {publicJobError,AD_QUALITY_MESSAGE,AD_QUALITY_REJECTED} from '../src/user-errors.js';
+import {photoEditView} from '../src/photo-edit.js';
+import {publicContentError,SERVICE_UNAVAILABLE_MESSAGE} from '../src/user-errors.js';
+it('provider quota is operational wording, never a customer charge instruction',()=>{expect(publicContentError({code:'insufficient_user_quota',message:'403 GapGPT quota exceeded'})).toBe(SERVICE_UNAVAILABLE_MESSAGE);});
+it('historical provider details are redacted in public output',()=>{expect(publicContentError({error:'اعتبار یا سهمیهٔ GapGPT کافی نیست؛ پس از شارژ دوباره تلاش کن.'})).toBe(SERVICE_UNAVAILABLE_MESSAGE);expect(publicJobError({error:'OpenAI API key invalid'})).toBe(SERVICE_UNAVAILABLE_MESSAGE);});
+it('safe application validation remains actionable',()=>{expect(publicContentError({status:400,message:'عکس محصول را بفرست.'})).toBe('عکس محصول را بفرست.');});
+it('coded quality errors expose application wording only',()=>{expect(publicJobError({errorCode:AD_QUALITY_REJECTED,error:'Internal tube geometry and gel-layer diagnosis'})).toBe(AD_QUALITY_MESSAGE);});
+it('old stored quality reports are redacted without altering the stored diagnostic',()=>{const job={id:'p',userId:'u',status:'error',error:'کیفیت لایه‌ها تأیید نشد. مکعب اضافه، مقیاس و مختصات مستر اشتباه است.'},before=structuredClone(job);const view=photoEditView({id:'e',userId:'u',previewJobId:'p',status:'rendering',assets:[],messages:[],usage:{}},{jobs:[job]});expect(view.error).toBe(AD_QUALITY_MESSAGE);expect(view.preview.error).toBe(AD_QUALITY_MESSAGE);expect(JSON.stringify(view)).not.toContain('مکعب');expect(job).toEqual(before);});
+it('unrelated actionable user errors retain their meaning',()=>{expect(publicJobError({error:'اعتبار حساب تمام شده.'})).toBe('اعتبار حساب تمام شده.');expect(publicJobError(null)).toBeNull();});

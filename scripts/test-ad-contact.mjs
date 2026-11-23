@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import {contactPixels} from '../src/ad-contact.js';
+const w=200,h=240,alpha=Buffer.alloc(w*h);
+for(const [x0,y0,x1,y1] of [[20,20,75,160],[110,50,170,200]])for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++)alpha[y*w+x]=255;
+const shadow=contactPixels(alpha,w,h),a=(x,y)=>shadow[(y*w+x)*4+3];
+assert(a(45,160)>0&&a(140,200)>0,'each separate object gets its own base anchor');
+assert.equal(a(45,20),0,'no duplicate object silhouette above the floor');
+assert.equal(a(140,160),0,'objects at different heights do not share a guessed base');
+assert(!shadow.some((v,i)=>i%4!==3&&v),'no source RGB or invented reflection survives');
+assert.throws(()=>contactPixels(Buffer.alloc(w*h),w,h),/no usable contact/);
+assert.throws(()=>contactPixels(Buffer.alloc(2),w,h),/Invalid subject mask/);
+console.log('6 contact geometry checks passed, zero external calls');

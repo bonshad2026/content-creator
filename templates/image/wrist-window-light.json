@@ -1,0 +1,126 @@
+{
+  "id": "wrist-window-light",
+  "version": 3,
+  "name": "روی مچ",
+  "type": "image",
+  "enabled": true,
+  "category": "jewelry",
+  "subcategories": [
+    "bracelets",
+    "watches",
+    "wristbands"
+  ],
+  "platforms": [
+    "instagram"
+  ],
+  "goals": [
+    "introduce",
+    "sale"
+  ],
+  "sample": "/templates/wrist-window-light/sample.webp",
+  "inputs": {
+    "minProducts": 1,
+    "maxProducts": 3,
+    "maxImages": 1,
+    "productKind": "wrist-wearable",
+    "productSelection": "per-item"
+  },
+  "formats": [
+    {
+      "id": "portrait",
+      "label": "پست عمودی · ۴:۵",
+      "size": "1024x1280",
+      "aspectRatio": "4:5"
+    }
+  ],
+  "provider": {
+    "service": "gapgpt",
+    "model": "gpt-image-2.6-sunburst",
+    "quality": "high"
+  },
+  "contextSelectors": [
+    {
+      "id": "wearer",
+      "label": "نوع دست",
+      "resolveFrom": "product-style",
+      "autoSelect": {
+        "male": "adult-man",
+        "female": "adult-woman"
+      },
+      "whenUncertain": "ask-user",
+      "options": [
+        {
+          "value": "adult-man",
+          "label": "دست مرد",
+          "prompt": "an adult male hand and wrist, naturally proportioned, with a neutral light linen sleeve"
+        },
+        {
+          "value": "adult-woman",
+          "label": "دست زن",
+          "prompt": "an adult female hand and wrist, naturally proportioned, with a neutral light linen sleeve"
+        }
+      ],
+      "allowUserOverride": true
+    }
+  ],
+  "prompt": "Transform the selected wrist-wearable product or products in the uploaded photo into a photorealistic premium lifestyle jewelry advertisement. Preserve the actual product design, link shapes and pattern, clasp, stones, engravings, material, colors, relative scale and branding. Remove the original hand, surroundings and unrelated objects. Only wrist-wearable items belong in this scene. Remove incidental jewelry worn on fingers, ears or neck; never enlarge a finger ring into a bracelet. Place only the selected products naturally around {{wearer}}. Create a vertical 4:5 close-up of ONE relaxed forearm resting comfortably on an ivory linen-covered tabletop. View the wrist from a gentle overhead three-quarter camera angle. The forearm runs diagonally from the lower-left toward the upper-right. Keep the wrist nearly straight, aligned naturally with the forearm and hand, without a sharp bend or twist. Make the wrist and jewelry the focal point near the center. Most of the hand and all fingertips extend naturally beyond the upper-right frame edge; do not invent visible isolated or cropped-in fingertips. Do not show a face, neck, shoulder, second hand or second arm. Maintain plausible continuous forearm-to-wrist-to-hand anatomy, realistic proportions, natural skin texture and consistent lighting. Use warm soft window light from the left, gentle contact shadows and a softly blurred warm beige background. Jewelry must rest on the skin with realistic fit and gravity. Preserve the link geometry and clasp; allow natural occlusion where the jewelry wraps behind the wrist instead of trying to display every link at once. For multiple selected items, arrange only those items into a comfortable coherent stack, without merging, duplicating or redesigning them. For watches and wrist devices preserve the real face, controls, screen and strap without inventing display details. Preserve original metal and stone colors. No additional jewelry, slogans, added text, logos, watermarks, water effects or unrelated props. High-end natural editorial product photography.",
+  "fields": [
+    {
+      "id": "productName",
+      "label": "نام محصول",
+      "maxLength": 100
+    },
+    {
+      "id": "brand",
+      "label": "برند",
+      "maxLength": 80
+    },
+    {
+      "id": "feature",
+      "label": "ویژگی محصول",
+      "maxLength": 240
+    },
+    {
+      "id": "price",
+      "label": "قیمت",
+      "maxLength": 60
+    },
+    {
+      "id": "orderMethod",
+      "label": "روش سفارش",
+      "maxLength": 160
+    },
+    {
+      "id": "wearer",
+      "label": "نوع دست",
+      "maxLength": 20,
+      "options": [
+        {
+          "value": "adult-man",
+          "label": "دست مرد"
+        },
+        {
+          "value": "adult-woman",
+          "label": "دست زن"
+        }
+      ]
+    }
+  ],
+  "tags": [
+    "دستبند",
+    "النگو",
+    "ساعت مچی",
+    "بند",
+    "زیورآلات",
+    "روی دست",
+    "مردانه",
+    "زنانه",
+    "نور پنجره",
+    "طلا",
+    "نقره",
+    "bracelet",
+    "watch",
+    "jewelry"
+  ],
+  "description": "نمای نزدیک محصول روی مچ، با نور گرم پنجره و پارچهٔ خنثی."
+}

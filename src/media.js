@@ -22,8 +22,8 @@ export function ffmpeg(args, cwd) {
  * Run an analysis filter and return the log lines that match `keep`: ALL of them, however long the file is.
  * (ffmpeg() keeps only the tail of the log, which on long videos silently lost everything but the last few seconds.)
  */
-export function ffmpegScan(args, keep, cwd) {
-  return new Promise((resolve) => {
+export function ffmpegScan(args, keep, cwd, {strict=false}={}) {
+  return new Promise((resolve,reject) => {
     const p = spawn(ffmpegPath, ["-hide_banner", "-nostats", "-y", ...args], { cwd, windowsHide: true });
     const lines = [];
     let rest = "";
@@ -32,9 +32,10 @@ export function ffmpegScan(args, keep, cwd) {
       rest = parts.pop();
       for (const l of parts) if (keep.test(l)) lines.push(l);
     });
-    p.on("error", () => resolve(lines.join("\n")));
-    p.on("close", () => {
+    p.on("error", error => strict?reject(error):resolve(lines.join("\n")));
+    p.on("close", code => {
       if (keep.test(rest)) lines.push(rest);
+      if(strict&&code!==0)return reject(new Error('بررسی محلی رسانه کامل نشد.'));
       resolve(lines.join("\n"));
     });
   });

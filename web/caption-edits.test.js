@@ -1,0 +1,26 @@
+import {expect,it} from 'vitest';
+import {captionPresentation} from '../src/caption-edits.js';
+import {resolveEditTurn} from '../src/edit-turn.js';
+import {selectionState} from '../src/template-changes.js';
+import {templateTimeline} from '../src/templates.js';
+import {templateCaptions} from '../src/template-render.js';
+import {templateFingerprint,templateContext} from '../src/template-conversation.js';
+const segment={id:'v:s0',start:.2,end:2,text:'سفارش کدید',words:[{text:'سفارش',start:.2,end:.8},{text:'کدید',start:.8,end:1.5}]};
+const assets=[{id:'v',type:'video',duration:4,hasAudio:true,frames:[],segments:[segment]}];
+const before=selectionState({opening:[],products:[],closing:['v:s0'],uncertain:false},assets);
+const dialogue={understanding:'اصلاح متن',disposition:'apply',reply:'متن زیرنویس اصلاح شد.',memory:{goal:'اصلاح زیرنویس',constraints:[]},question:null,mediaBindings:[],operations:[{type:'update',target:'captions/v:s0',assetIds:[]}]};
+const run=text=>resolveEditTurn({previous:before,assets,proposal:{...before,captionEdits:[{id:segment.id,text}],dialogue}});
+it.each(['سفارش بدید','ثبت سفارش از اینستاگرام','Order here'])('executes a complete caption correction: %s',text=>{
+  const original=structuredClone(assets),result=run(text);
+  expect(result.problems).toEqual([]);expect(result.analysis.captionEdits).toEqual([{id:segment.id,text}]);expect(assets).toEqual(original);
+  const clips=templateTimeline(result.analysis,assets),ass=templateCaptions(clips);
+  expect(ass).toContain(text);expect(ass).not.toContain('کدید');expect(clips[0].audioAsset).toBe('v');expect(clips[0].sourceIn).toBe(templateTimeline(before,assets)[0].sourceIn);
+});
+it('preserves timing on a one-to-one word correction',()=>{const result=captionPresentation({captionEdits:[{id:segment.id,text:'سفارش بدید'}]},segment);expect(result.words.map(w=>[w.start,w.end])).toEqual(segment.words.map(w=>[w.start,w.end]));expect(result.words[1].text).toBe('بدید');});
+it('uses phrase timing instead of stale word text when the word count changes',()=>{const result=captionPresentation({captionEdits:[{id:segment.id,text:'از همین صفحه سفارش خودتان را ثبت کنید'}]},segment);expect(result.words).toEqual([]);expect(result.text).toContain('ثبت کنید');});
+it('keeps suggestions separate from executed caption changes',()=>{const r=resolveEditTurn({previous:before,assets,proposal:{...before,corrections:[{id:segment.id,text:'سفارش بدید'}],dialogue:{...dialogue,disposition:'acknowledge',operations:[]}}});expect(r.analysis.captionEdits).toEqual([]);expect(r.execution.changed).toBe(false);expect(r.dialogue.reply).toBe('این اصلاح فقط پیشنهاد است؛ هنوز اعمال نشده.');});
+it('does not accept an acknowledgement as a completed caption edit',()=>{const r=resolveEditTurn({previous:before,assets,proposal:{...before,captionEdits:[{id:segment.id,text:'سفارش بدید'}],dialogue:{...dialogue,disposition:'acknowledge',operations:[]}}});expect(r.errorKind).toBe('execution');expect(r.problems).toContain('caption-change-not-executed');});
+it('does not apply unsolicited caption text during initial assembly',()=>{const r=resolveEditTurn({previous:null,assets,proposal:{...before,captionEdits:[{id:segment.id,text:'بی‌درخواست'}],dialogue:{...dialogue,operations:[]}}});expect(r.analysis.captionEdits).toEqual([]);});
+it('restores ASR captions when the override is explicitly removed',()=>{const applied=run('سفارش بدید').analysis;const r=resolveEditTurn({previous:applied,assets,proposal:{...applied,dialogue:{...dialogue,operations:[{type:'remove',target:'captions/v:s0',assetIds:[]}]}}});expect(r.problems).toEqual([]);expect(r.analysis.captionEdits).toEqual([]);expect(templateCaptions(templateTimeline(r.analysis,assets))).toContain('کدید');});
+it('caption edits change the actual-output fingerprint and survive later unrelated changes',()=>{const applied=run('سفارش بدید').analysis;expect(templateFingerprint(applied,assets)).not.toBe(templateFingerprint(before,assets));const r=resolveEditTurn({previous:applied,assets,proposal:{...before,adjustments:{fontSize:54},dialogue:{...dialogue,operations:[{type:'update',target:'adjustments/fontSize',assetIds:[]}]}}});expect(r.analysis.captionEdits).toEqual(applied.captionEdits);expect(r.analysis.adjustments.fontSize).toBe(54);});
+it('exposes executable text targets and capability to the model',()=>{const context=templateContext({analysis:before,assets,messages:[]});expect(context.capabilities.correctCaptionText).toBe(true);expect(context.editableTargets.find(t=>t.id==='captions/v:s0').value).toBe('سفارش کدید');});

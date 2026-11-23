@@ -7,7 +7,7 @@ import http from "node:http";
 import crypto from "node:crypto";
 import express from "express";
 fs.rmSync(process.env.DATA_DIR, { recursive: true, force: true });
-const { uploadRoutes, takeUpload } = await import("../src/uploads.js");
+const { uploadRoutes, takeUpload, MAX_UPLOAD } = await import("../src/uploads.js");
 
 const results = [];
 const check = (name, ok, note = "") => { console.log(ok ? "ok  " : "FAIL", name); results.push({ case: name, ok: ok ? "PASS" : "FAIL", note: String(note).slice(0, 90) }); };
@@ -76,7 +76,7 @@ try { takeUpload(db, db.users.b, half.id, target + "x"); } catch { threw = true;
 check("takeUpload of an unfinished upload throws", threw);
 
 check("bad key refused", (await call("POST", "/api/uploads", { body: { key: "../x", size: 5 } })).status === 400);
-check("too large refused", (await call("POST", "/api/uploads", { body: { key: "testkey0002", size: 401 * 1024 * 1024 } })).status === 413);
+check("too large refused", (await call("POST", "/api/uploads", { body: { key: "testkey0002", size: MAX_UPLOAD + 1 } })).status === 413);
 blocked = true;
 check("plan allows no reel → upload refused before any bytes", (await call("POST", "/api/uploads", { body: { key: "testkey0003", size: 5 } })).status === 403);
 

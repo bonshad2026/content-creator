@@ -1,3 +1,5 @@
+import {CONVERSATION_RULES} from './conversation.js';
+import {traceError} from './edit-trace.js';
 // All AI calls. GapGPT (OpenAI-compatible). Without GAPGPT_API_KEY → demo mode with canned output.
 //
 // Token-saving design:
@@ -87,21 +89,27 @@ const USAGE_LOG = process.env.USAGE_LOG || `${process.env.DATA_DIR || "data"}/us
  * the request sent once more with a 1.5x limit. An unparseable complete reply is retried once as before.
  * AI_DRYRUN=<file>: nothing is sent; the request is written to that file and a DRYRUN error is thrown (token budget).
  */
-async function call(system, content, maxTokens, label = "") {
+async function call(system, content, maxTokens, label = "", trace = null) {
   if (process.env.AI_DRYRUN) {
     const fs = await import("node:fs");
     fs.writeFileSync(process.env.AI_DRYRUN, JSON.stringify({ label, maxTokens, system, content }));
+    trace?.record('model.dry_run', {label, maxTokens, system, content});
     throw Object.assign(new Error("DRYRUN"), { dryRun: true });
   }
   const usage = { tokens: 0, cost: 0, requests: [] };
   let limit = maxTokens;
   for (let attempt = 1; attempt <= 2; attempt++) {
-    const res = await client.chat.completions.create({
+    const request = {
       model: process.env.AI_MODEL || MODEL, // read per request: the model comparison switches it between runs
       max_tokens: limit,
       reasoning_effort: "low",
       messages: [{ role: "system", content: system }, { role: "user", content }],
-    });
+    };
+    trace?.record('model.request', {label, attempt, request});
+    let res;
+    try { res = await client.chat.completions.create(request); }
+    catch (error) { trace?.record('model.error', {label, attempt, error:traceError(error)}); throw error; }
+    trace?.record('model.response', {label, attempt, response:res});
     const u = res.usage || {};
     const finish = res.choices?.[0]?.finish_reason;
     const rec = {
@@ -119,6 +127,7 @@ async function call(system, content, maxTokens, label = "") {
     } catch {}
     const text = res.choices?.[0]?.message?.content || "";
     const data = parseJson(text) || (finish === "length" ? repairJson(text) : null);
+    trace?.record('model.parsed', {label, attempt, finish, data, usage});
     if (data) {
       if (finish === "length") console.warn(`reply cut off at ${limit} tokens, repaired locally (${label})`);
       return { data, usage };
@@ -175,27 +184,61 @@ export async function learnFromSamples(style, samplesB64) {
  * No `prompt` is sent: the Persian hint words biased language detection on English / non-speech audio, and the
  * planner corrects mis-heard words in its `subs` anyway. `language` (ISO code) only when it is known.
  */
-export async function transcribe(audioFile, language = "") {
+export async function transcribe(audioFile, language = "", trace = null) {
   if (demoMode) return { segments: [], language: "", duration: 0, cost: 0 };
   const fs = await import("node:fs");
-  const r = await client.audio.transcriptions.create({
-    model: "whisper-1", file: fs.createReadStream(audioFile), response_format: "verbose_json",
+  const options = {
+    model: "whisper-1", response_format: "verbose_json",
     timestamp_granularities: ["word", "segment"], // word times → karaoke subtitles (same price)
     ...(language ? { language } : {}),
-  });
-  // hand the words out to their segments in order (times at segment edges are often shared, so count instead)
+  };
+  trace?.record('speech.request', {request:{...options, file:await trace.file(audioFile)}});
+  let r;
+  try { r = await client.audio.transcriptions.create({...options, file:fs.createReadStream(audioFile)}); }
+  catch (error) { trace?.record('speech.error', {error:traceError(error)}); throw error; }
+  trace?.record('speech.response', {response:r});
+  // Persian tokenization may join/split words differently in text and word arrays.
+  // Assign by actual time, so one spelling discrepancy cannot shift every later subtitle.
   const words = (r.words || []).map((w) => ({ start: w.start, end: w.end, text: String(w.word).trim() }));
-  let wi = 0;
+  const buckets=(r.segments||[]).map(()=>[]);
+  for(const word of words){const mid=(word.start+word.end)/2;let best=-1,distance=Infinity;(r.segments||[]).forEach((s,i)=>{const gap=Math.max(0,s.start-mid,mid-s.end);if(gap<distance){distance=gap;best=i;}});if(best>=0&&distance<.5)buckets[best].push(word);}
   const segments = (r.segments || [])
-    .map((s) => {
-      const count = s.text.trim().split(/\s+/).filter(Boolean).length;
-      const own = words.slice(wi, wi + count);
-      wi += count;
+    .map((s,i) => {
+      const own = buckets[i];
       return { start: s.start, end: s.end, text: s.text.trim(), words: own, noSpeech: s.no_speech_prob ?? 0, logprob: s.avg_logprob ?? null, compression: s.compression_ratio ?? null };
     })
     .filter((s) => s.text);
   // Whisper auto-detects the spoken language (Persian, English, …)
-  return { segments, language: r.language || "", duration: r.duration || 0, cost: ((r.duration || 0) / 60) * 0.006 };
+  return { segments, language: r.language || "", duration: r.duration || 0, tokens: r.usage?.total_tokens || 0, cost: r.usage?.cost ?? ((r.duration || 0) / 60) * 0.006 };
+}
+
+// No inherited creator profile, taste, brand or free-form editing instructions.
+export async function inspectTemplate(assets, context, dir, trace = null) {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const content = [{ type: "text", text: JSON.stringify({
+    context,
+    assets: assets.map(a => ({ id: a.id, type: a.type, duration: a.duration, requestedPart: a.part, requestedProduct: a.product,
+      segments: a.segments.map(s => ({ id:s.id,text:s.text,captionText:context.currentState?.captionEdits?.find(c=>c.id===s.id)?.text??s.text,start:s.start,end:s.end,wordTiming:{count:s.words?.length||0,longestSeconds:Math.max(0,...(s.words||[]).map(w=>w.end-w.start))},timingStatus:s.timingStatus||"legacy",noSpeech:s.noSpeech,logprob:s.logprob,sourceSegment:s.sourceSegment,take:s.take,reviewed:!!s.userEdited||!!context.currentState?.captionEdits?.some(c=>c.id===s.id) })),
+      mediaEvidence:a.mediaEvidence||null,frames:a.frames.map(f=>({id:f.id,start:f.start,end:f.end,t:f.t,shot:f.shot,shotStart:f.shotStart,shotEnd:f.shotEnd,usable:f.usable})),
+    })),
+  }) }];
+  // Bounded representative frames across all assets. More frames remain available for user review.
+  const currentFiles=context.currentTurn?.assetIds||[],recentIds=new Set(currentFiles.length?currentFiles:context.history?.findLast(m=>m.role==='user'&&m.assetIds?.length)?.assetIds||[]);
+  const frames=items=>items.flatMap(a=>a.frames.map(f=>({...f,asset:a.id})));
+  const sample=(items,n)=>items.length<=n?items:Array.from({length:n},(_,i)=>items[Math.floor((i+.5)*items.length/n)]);
+  const recent=sample(frames(assets.filter(a=>recentIds.has(a.id))),16);
+  const picked=[...recent,...sample(frames(assets.filter(a=>!recentIds.has(a.id))),32-recent.length)];
+  for (const f of picked) {
+    content.push({ type: "text", text: `Frame ${f.id}, asset ${f.asset}` });
+    content.push(img(fs.readFileSync(path.join(dir, f.file)).toString("base64")));
+  }
+  return call(`${CONVERSATION_RULES}
+You fill the evidence slots of a FIXED product-presenter video template. Include the required dialogue object alongside the evidence fields. Return JSON only:
+{"opening":["segment-id"],"products":[{"id":"stable-product-id","name":"short Persian product name","speech":["segment-id"],"visuals":["frame-id"],"visualRanges":[{"frameId":"frame-id","start":0,"end":4}]}],"closing":["segment-id"],"uncertain":false,"adjustments":{"fontSize":44,"gainDb":0,"speeds":{}},"corrections":[{"id":"segment-id","text":"suggested Persian ASR correction"}],"captionEdits":[{"id":"segment-id","text":"complete user-requested caption text"}]}.
+When the USER explicitly requests a text/subtitle correction, APPLY it through update on captions/<segmentId> with assetIds:[] and put the complete replacement text in captionEdits. This is an executed caption edit, not an acknowledge or review suggestion. Resolve the intended segment from current caption text, conversation and timeline; ask a precise question only if genuinely ambiguous. Caption text can change without replacing its source segment. Preserve unrelated caption overrides. Remove on a captions target restores original ASR. Never claim a caption edit changes the recorded voice. For unsolicited ASR observations, suggest corrections ONLY for clear Persian ASR spelling mistakes and terms supported by speech context or legible product labels. Never invent a missing phrase, claim, brand, number or benefit. Preserve qualifications and negations. Never correct reviewed segments. Corrections are user-review suggestions, not new speech. Unclear phrases must stay uncertain.
+  Resolve the current request against context.currentState, not only the original version. Use current state and memory to preserve unrelated selections. The timeline maps output seconds to source segments. Missing evidence requires a precise question; ambiguous requests need dialogue.clarify, not generic recognition confirmation. Never claim to change recorded speech by changing captions.
+  Choose complete, usable speech segments, preserving original order within each product. Remove repeated takes and abandoned sentences. Never drop a qualification, correction or negation that changes a product/brand claim. Opening and closing MUST be speech in video with presenter visible, not audio notes. Opening introduces the products; closing provides a real conclusion or contact/order action. Products: on INITIAL assembly identify each distinct requested product, even if its evidence is missing. For subsequent edits preserve stable product IDs from context.currentState; keep the same slot ID for a replacement, and preserve IDs when reordering or removing other slots. For a new slot use a unique ASCII product ID. Honor explicit exclusions/removals: a product appearing in historical media does not require including it in the current edit. Product speech must give at least one meaningful fact/use/benefit, not only say 'this product'. Select visualRanges for all selected frame IDs: each range must contain its frame time and stay inside the supplied shotStart/shotEnd. A shot boundary is only a technical cut, NOT proof the same product stays visible; choose a narrower range when a pan changes subject. Ranges must show that product throughout, avoid all black spans, and collectively cover the selected spoken source duration including small cut padding. Multiple supplied views can cover one sentence; overlapping ranges cannot create extra duration. Prefer usable existing media or a different healthy take before requesting more input. Never substitute the speech video when chosen product footage is too short, never loop/freeze to fill it. A video with black picture may still be valid speech but cannot be presenter footage. Segment word times/confidence and silence-based takes are evidence, not a guarantee of ASR accuracy; preserve qualifications, negations and every meaningful part of a sentence when selecting takes. Do not infer that a long/uncertain word is a clean take. Visuals must actually show that specific product recognizably, with usable exposure/focus; one angle is sufficient. Select only supplied IDs. Do not substitute unrelated products. An audio supplement must belong to its requestedPart/product. No music, effects, emoji, camera or font-family changes. LIMITED adjustments are allowed only within context.capabilities.adjustments: fontSize 32–64 pixels at 720x1280, gainDb -12 to +6 dB, and per-segment speeds 0.75–1.25. Preserve existing values unless the user changes them. For relative adjustments, use current values and small meaningful increments. Return adjustments {fontSize,gainDb,speeds:{segmentId:factor}}. Use update operations on the supplied adjustment target IDs with assetIds:[]; these are scalar settings, not asset replacements. When a request is outside these limits, do not clamp or substitute it silently: use unsupported and say briefly what was ignored. Missing evidence is [] and uncertain is true when identity, visibility or completeness cannot be established. User may identify products or request a single angle. Do not invent content.`, content, 3600, "template-evidence", trace);
 }
 
 /**

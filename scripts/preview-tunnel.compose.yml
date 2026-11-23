@@ -1,0 +1,17 @@
+services:
+  staging:
+    image: docker-mirror.liara.ir/caddy:2-alpine
+    restart: unless-stopped
+    ports: ["127.0.0.1:8091:80"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    env_file: ["${STAGING_ENV_FILE}"]
+    volumes: ["${PREVIEW_CADDYFILE}:/etc/caddy/Caddyfile:ro"]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - 'test -n "$$STAGING_AUTH_PASSWORD" || exit 1; export STAGING_AUTH_HASH="$$(caddy hash-password --plaintext "$$STAGING_AUTH_PASSWORD")"; exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile'
+  tunnel:
+    image: docker-mirror.liara.ir/matinrezakhani/matstack-docker-agent:2.0.2
+    restart: unless-stopped
+    depends_on: [staging]
+    environment:
+      MATSTACK_TUNNEL_KEY: ${MATSTACK_TUNNEL_KEY}

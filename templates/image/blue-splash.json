@@ -1,0 +1,78 @@
+{
+  "id": "blue-splash",
+  "version": 1,
+  "name": "اسپلش آبی",
+  "type": "image",
+  "enabled": true,
+  "category": "beauty",
+  "subcategories": [
+    "skincare",
+    "deodorant"
+  ],
+  "platforms": [
+    "instagram"
+  ],
+  "goals": [
+    "introduce",
+    "sale"
+  ],
+  "sample": "/templates/blue-splash/sample.webp",
+  "inputs": {
+    "minProducts": 1,
+    "maxProducts": 1,
+    "maxImages": 1
+  },
+  "formats": [
+    {
+      "id": "portrait",
+      "label": "پست عمودی · ۴:۵",
+      "size": "1024x1280",
+      "aspectRatio": "4:5"
+    }
+  ],
+  "provider": {
+    "service": "gapgpt",
+    "model": "gpt-image-2.6-sunburst",
+    "quality": "high"
+  },
+  "prompt": "Transform the product in the uploaded photo into a photorealistic premium skincare advertisement.\n\nUse the uploaded image as the authoritative product reference. Preserve the exact product identity: packaging shape, proportions, cap, colors, logo, branding, and all visible label text. Do not invent or rewrite lettering. Remove the original surroundings and any hands or unrelated objects.\n\nCreate a vertical 4:5 studio composition. Position one large product near the center, tilted approximately 10 degrees counterclockwise, with the entire package visible and comfortable margins.\n\nUse a clean, pale icy-blue background with a soft luminous gradient behind the product. Add a horizontal water surface approximately 60% down the image. The upper portion of the product should remain above water, while its lower portion is submerged.\n\nCreate a crisp, realistic crown-shaped splash around the point where the product intersects the water. Include water both behind and in front of the product, with scattered droplets above the surface and clusters of small bubbles around the submerged portion.\n\nApply physically plausible refraction and subtle caustic lighting below the waterline. Keep the main branding above water and clearly readable. Add restrained water droplets to the packaging.\n\nRelight the product with a large soft studio key light from the upper left and subtle edge highlights. Preserve its original material and surface finish. Make the product, water, reflections, and shadows belong to the same photographed scene.\n\nThe result should look like high-end commercial product photography, with detailed transparent water and a restrained blue palette. No additional products, props, fruit, ice cubes, slogans, borders, watermarks, or added text.",
+  "fields": [
+    {
+      "id": "productName",
+      "label": "نام محصول",
+      "maxLength": 100
+    },
+    {
+      "id": "brand",
+      "label": "برند",
+      "maxLength": 80
+    },
+    {
+      "id": "feature",
+      "label": "ویژگی محصول",
+      "maxLength": 240
+    },
+    {
+      "id": "price",
+      "label": "قیمت",
+      "maxLength": 60
+    },
+    {
+      "id": "orderMethod",
+      "label": "روش سفارش",
+      "maxLength": 160
+    }
+  ],
+  "tags": [
+    "اسپلش",
+    "آب",
+    "کرم",
+    "مراقبت پوست",
+    "ضدتعریق",
+    "دئودورانت",
+    "آرایشی بهداشتی",
+    "skincare",
+    "splash"
+  ],
+  "description": "نمای تبلیغاتی محصول در آب، با نور و پس‌زمینهٔ آبی روشن."
+}

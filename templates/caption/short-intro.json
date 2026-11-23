@@ -1,0 +1,10 @@
+{
+  "id": "short-intro",
+  "name": "معرفی کوتاه",
+  "prompt": "Write one concise Persian Instagram caption: an engaging opening, a factual product introduction, then one natural call to action. Use only supplied verified product facts. Do not invent efficacy, ingredients, price, discount, testimonials, urgency or availability. Keep to 40–80 Persian words. Add at most three relevant hashtags.",
+  "type": "caption",
+  "version": 1,
+  "platforms": [
+    "instagram"
+  ]
+}

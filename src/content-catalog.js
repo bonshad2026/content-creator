@@ -1,0 +1,19 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {z} from 'zod';
+const root=fileURLToPath(new URL('../templates/',import.meta.url));
+const token=z.string().regex(/^[a-z][a-z0-9-]{0,60}$/);
+const imageSchema=z.object({id:token,version:z.number().int().positive(),name:z.string().min(1),type:z.literal('image'),tags:z.array(z.string().min(1).max(60)).max(30).default([]),description:z.string().max(300).optional(),enabled:z.boolean(),category:token,subcategories:z.array(token).min(1),platforms:z.array(token),goals:z.array(token),sample:z.string().regex(/^\/templates\/[a-z0-9-]+\/sample\.webp$/),inputs:z.object({minProducts:z.number().int().min(1),maxProducts:z.number().int().max(3),maxImages:z.number().int().min(1).max(3),productKind:token.optional(),productSelection:z.literal('per-item').optional()}),formats:z.array(z.object({id:token,label:z.string(),size:z.string().regex(/^\d{3,4}x\d{3,4}$/),aspectRatio:z.string()})).min(1),provider:z.object({service:z.literal('gapgpt'),model:z.string().min(1),quality:z.literal('high')}),contextSelectors:z.array(z.object({id:token,label:z.string(),resolveFrom:z.enum(['product-style','product-notes']),question:z.string().max(160).optional(),fallbackQuestion:z.string().max(160).optional(),fallbackRetryLabel:z.string().max(70).optional(),requireEvidence:z.boolean().optional(),evidenceTerms:z.record(z.array(z.string())).optional(),autoSelect:z.record(token),whenUncertain:z.literal('ask-user'),options:z.array(z.object({value:token,label:z.string(),prompt:z.string().min(5)})).min(2),allowUserOverride:z.boolean()})).optional(),recognitionInstructions:z.string().max(4000).optional(),renderFacts:z.array(token).optional(),prompt:z.string().min(100),fields:z.array(z.object({id:token.or(z.enum(['productName','orderMethod'])),label:z.string(),maxLength:z.number().int().min(1).max(300),affectsImage:z.boolean().optional(),options:z.array(z.object({value:token,label:z.string()})).optional()}))}).refine(t=>t.inputs.minProducts<=t.inputs.maxProducts);
+const captionSchema=z.object({id:token,name:z.string().min(1),type:z.literal('caption'),version:z.number().int().positive(),platforms:z.array(token),prompt:z.string().min(40)});
+const load=(folder,schema)=>fs.readdirSync(path.join(root,folder)).filter(f=>f.endsWith('.json')).map(f=>schema.parse(JSON.parse(fs.readFileSync(path.join(root,folder,f),'utf8'))));
+export const imageTemplates=load('image',imageSchema).filter(t=>t.enabled);
+export const captionTemplates=load('caption',captionSchema);
+if(new Set(imageTemplates.map(t=>t.id)).size!==imageTemplates.length)throw Error('Duplicate image template');
+const catalogConfig=z.object({platforms:z.array(z.object({id:token,name:z.string(),enabled:z.boolean()})),categories:z.array(z.object({id:token,name:z.string(),subcategories:z.array(z.object({id:token,name:z.string()}))})),goals:z.array(z.object({id:token,name:z.string()}))}).parse(JSON.parse(fs.readFileSync(path.join(root,'catalog.json'),'utf8')));
+export const contentCatalog={...catalogConfig,imageTemplates:imageTemplates.map(({prompt,provider,...t})=>t),captionTemplates:captionTemplates.map(({prompt,...t})=>t)};
+export function contentSelection(input){
+  const image=imageTemplates.find(t=>t.id===input.imageTemplate),caption=captionTemplates.find(t=>t.id===input.captionTemplate);
+  if(input.platform!=='instagram'||!image||!caption||input.category&&image.category!==input.category||input.subcategory&&!image.subcategories.includes(input.subcategory)||!image.goals.includes(input.goal)||!image.formats.some(f=>f.id===input.format))throw Object.assign(Error('انتخاب‌های تولید محتوا معتبر نیست.'),{status:400});
+  return {image:structuredClone(image),caption:structuredClone(caption),subcategory:input.subcategory||null,format:image.formats.find(f=>f.id===input.format)};
+}

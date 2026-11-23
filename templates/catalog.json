@@ -1,0 +1,84 @@
+{
+  "platforms": [
+    {
+      "id": "instagram",
+      "name": "اینستاگرام",
+      "enabled": true
+    },
+    {
+      "id": "telegram",
+      "name": "تلگرام",
+      "enabled": false
+    },
+    {
+      "id": "x",
+      "name": "ایکس",
+      "enabled": false
+    },
+    {
+      "id": "tiktok",
+      "name": "تیک‌تاک",
+      "enabled": false
+    }
+  ],
+  "categories": [
+    {
+      "id": "beauty",
+      "name": "آرایشی‌بهداشتی",
+      "subcategories": [
+        {
+          "id": "skincare",
+          "name": "مراقبت پوست"
+        },
+        {
+          "id": "deodorant",
+          "name": "دئودورانت و ضدتعریق"
+        },
+        {
+          "id": "perfume",
+          "name": "عطر و ادکلن"
+        }
+      ]
+    },
+    {
+      "id": "jewelry",
+      "name": "زیورآلات",
+      "subcategories": [
+        {
+          "id": "bracelets",
+          "name": "دستبند و النگو"
+        },
+        {
+          "id": "watches",
+          "name": "ساعت مچی"
+        },
+        {
+          "id": "wristbands",
+          "name": "بند و اکسسوری مچ"
+        },
+        {
+          "id": "rings",
+          "name": "انگشتر"
+        },
+        {
+          "id": "necklaces",
+          "name": "گردنبند"
+        },
+        {
+          "id": "earrings",
+          "name": "گوشواره"
+        }
+      ]
+    }
+  ],
+  "goals": [
+    {
+      "id": "introduce",
+      "name": "معرفی محصول"
+    },
+    {
+      "id": "sale",
+      "name": "دعوت به خرید"
+    }
+  ]
+}

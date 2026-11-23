@@ -62,7 +62,8 @@ export function verifyCode(rawPhone, rawCode) {
 }
 
 export function requireUser(req, res, next) {
-  const token = (req.get("authorization") || "").replace(/^Bearer /, "");
+  // Keep HTTP Basic authentication available to the HTTPS preview gateway.
+  const token = req.get("x-creator-token") || (req.get("authorization") || "").replace(/^Bearer /, "");
   const user = db.users[db.sessions[token]];
   if (!user) return res.status(401).json({ error: "دوباره وارد شوید." });
   req.user = user;

@@ -5,6 +5,10 @@ import { getDb, save, readFrameB64 } from "./store.js";
 import { learnFromSamples, generatePost, styleText, revisePlan } from "./ai.js";
 import { listMoods } from "./music.js";
 import { runReel } from "./reel.js";
+import { renderTemplate } from "./template-render.js";
+import {createEditTrace,traceError} from './edit-trace.js';
+import {isPhotoEdit,renderPhotoJob,accountAdUsage} from './photo-edit.js';
+import {publicJobError} from './user-errors.js';
 
 const db = getDb();
 const MAX_PARALLEL = Number(process.env.MAX_PARALLEL || 3);
@@ -48,10 +52,20 @@ async function ensureProfile(user, job) {
 async function run(job) {
   const user = db.users[job.userId];
   if (!user) return;
+  const trace=job.templateId?createEditTrace({editId:job.editId,kind:'render',jobId:job.id,analysisTraceId:job.analysisTraceId||null,revisionOf:job.revisionOf||null}, {resumeId:job.renderTraceId||null}):null;
+  if(trace)job.renderTraceId=trace.id;
   job.status = "running";
   job.startedAt = Date.now();
   save();
   try {
+    if (job.templateId) {
+      trace.record('render.input',{jobId:job.id,templateId:job.templateId,templateData:job.templateData});
+      const progress=stage=>{trace.record('render.progress',{stage});job.stage=stage;save();};
+      Object.assign(job, isPhotoEdit(job)?await renderPhotoJob(job,progress,{onUsage:event=>{accountAdUsage(job,user,event);trace.record('image.usage',event);save();}}):await renderTemplate(job,progress,trace));
+      job.status = "done"; job.stage = null; job.finishedAt = Date.now(); save();
+      trace.record('render.completed',{jobId:job.id,status:job.status,video:job.video,output:job.output});
+      return;
+    }
     // taste memory: the creator's last few notes on earlier edits ride along (a few dozen tokens)
     const taste = user.taste?.length ? `\nCreator's feedback on past edits (follow it): ${user.taste.slice(-6).join(" | ")}` : "";
     const profileText = (await ensureProfile(user, job)) + taste;
@@ -84,15 +98,19 @@ async function run(job) {
     }
     job.status = "done";
   } catch (e) {
+    if(isPhotoEdit(job)&&e.needsInput){job.status='awaiting_input';job.photoQuestion=e.question;job.stage=null;job.finishedAt=Date.now();save();return;}
+    trace?.record('render.error',{error:traceError(e)});
     console.error("job", job.id, e.message);
     job.status = "error";
+    job.errorCode=e.code||null;
     job.error =
-      e.status === 429 ? "سرویس هوش مصنوعی شلوغ است. کمی بعد دوباره تلاش کنید."
+      e.publicMessage ? e.publicMessage : e.status === 429 ? "سرویس هوش مصنوعی شلوغ است. کمی بعد دوباره تلاش کنید."
       : /quota|balance|credit|insufficient/i.test(e.message || "") ? "اعتبار حساب هوش مصنوعی تمام شده. حساب را شارژ کنید و دوباره تلاش کنید."
       : e.status === 401 ? "کلید API نامعتبر است."
       : e.message?.startsWith("پاسخ مدل") || e.message?.startsWith("فایل ویدیو") ? e.message
       : e.message?.startsWith("ffmpeg") ? "ساخت ویدیو ناموفق بود. دوباره تلاش کنید."
       : "تولید ناموفق بود. دوباره تلاش کنید.";
+    job.error=publicJobError(job);
   }
   job.finishedAt = Date.now();
   save();
@@ -116,6 +134,7 @@ export function enqueue(job) {
 
 // On restart, resume anything that didn't finish (its frames are on disk).
 for (const j of db.jobs) {
+  if(process.env.APP_EDITION!=='studio-internal')continue;
   if (j.status === "uploading") Object.assign(j, { status: "error", error: "آپلود کامل نشد. دوباره بفرست." });
   if (j.status === "queued" || j.status === "running") {
     j.status = "queued";

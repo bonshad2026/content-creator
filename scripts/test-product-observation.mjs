@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import {normalizeProductObservation,productObservationSchema} from '../src/product-observation.js';
+import {inferTemplateContext} from '../src/template-context.js';
+import {imageTemplates} from '../src/content-catalog.js';
+let checks=0;const check=(name,fn)=>{fn();checks++;console.log('ok',name);};
+const raw={products:[{name:'Example perfume',brand:null,visibleText:['Lemon'],fit:'compatible',compatible:true,context:{scent:{style:'citrus',confidence:.7,evidence:{source:'visible-label',quote:'Lemon'}}}}],certain:true};
+const before=structuredClone(raw),schema=productObservationSchema(true),r=schema.parse(raw);
+check('unknown optional brand becomes empty, never invented',()=>{assert.equal(r.products[0].brand,'');assert.equal(r.products[0].name,raw.products[0].name);});
+check('unambiguous product-level context becomes canonical root context',()=>{assert.equal(r.compatible,true);assert.equal(r.context.scent.style,'citrus');assert.equal(r.context.scent.confidence,.7);});
+check('original evidence is preserved and source response remains untouched',()=>{assert.deepEqual(raw,before);assert.deepEqual(r.context.scent.evidence,raw.products[0].context.scent.evidence);});
+check('low-confidence recovered notes still require user choice',()=>assert.equal(inferTemplateContext(imageTemplates.find(t=>t.id==='scent-atmosphere'),r).scent,undefined));
+check('mixed product contexts do not become an invented unanimous choice',()=>{const out=schema.parse({products:[{name:'a',brand:'',fit:'compatible',context:{wearer:{style:'male',confidence:.99}}},{name:'b',brand:'',fit:'compatible',context:{wearer:{style:'female',confidence:.99}}}],certain:true});assert.equal(out.context.wearer.style,'uncertain');assert.equal(out.context.wearer.confidence,0);});
+check('excluded incidental product cannot determine the selected context',()=>{const out=schema.parse({products:[raw.products[0],{name:'ring',brand:null,fit:'incompatible',context:{scent:{style:'woody',confidence:1}}}],certain:true});assert.equal(out.context.scent.style,'citrus');});
+check('missing fit is uncertainty, not inferred compatibility',()=>{const out=schema.parse({products:[{name:'a',brand:null},{name:'b',brand:null}],compatible:true,certain:true});assert(out.products.every(p=>p.fit==='uncertain'));});
+check('invalid factual types and truthy strings are rejected',()=>{assert.throws(()=>schema.parse({...raw,products:[{...raw.products[0],brand:{name:'invented'}}]}));assert.throws(()=>schema.parse({...raw,certain:'true'}));});
+check('absence of optional values does not crash or assert certainty',()=>{const out=productObservationSchema().parse({products:[{name:'a'}]});assert.equal(out.products[0].brand,'');assert.deepEqual(out.products[0].visibleText,[]);assert.equal(out.certain,false);});
+check('valid canonical responses stay identical and normalization is idempotent',()=>{assert.deepEqual(schema.parse(r),r);const a=normalizeProductObservation(raw,true);assert.deepEqual(normalizeProductObservation(a,true),a);});
+console.log(`${checks} observation contract checks passed; zero external calls`);

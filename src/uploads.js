@@ -9,7 +9,9 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { DATA_DIR } from "./store.js";
 
-export const MAX_UPLOAD = 400 * 1024 * 1024; // per file
+const configuredMB = Number(process.env.MAX_UPLOAD_MB || 1024);
+export const MAX_UPLOAD = (Number.isFinite(configuredMB) && configuredMB > 0 ? Math.floor(configuredMB) : 1024) * 1024 * 1024;
+const limitMessage = `فایل خیلی بزرگ است؛ حداکثر ${String(MAX_UPLOAD / 1048576).replace(/\d/g,d=>"۰۱۲۳۴۵۶۷۸۹"[d])} مگابایت.`;
 const MAX_CHUNK = 16 * 1024 * 1024;
 const KEEP_MS = 3 * 86_400_000;
 const PARTS_DIR = path.join(DATA_DIR, "parts");
@@ -23,17 +25,18 @@ const view = (u) => { const received = sizeOnDisk(u.id); return { id: u.id, size
 // one write per upload at a time; a new request for the same upload replaces a hung one (the phone gave up on it)
 const active = new Map(); // id → { req, closed: Promise }
 
-export function uploadRoutes(app, { db, save, requireUser, wrap, canUpload = () => {} }) {
+export function uploadRoutes(app, { db, save, requireUser, wrap, canUpload = () => {}, validateUpload=null, maxBytes=MAX_UPLOAD }) {
   db.uploads ??= {};
 
   // start or find: {key, size} → {id, size, received, done}
   app.post("/api/uploads", requireUser, wrap(async (req, res) => {
     const key = String(req.body?.key || ""), size = Number(req.body?.size);
     if (!/^[a-z0-9]{8,80}$/.test(key) || !Number.isInteger(size) || size <= 0) throw err(400, "فایل نامعتبر است.");
-    if (size > MAX_UPLOAD) throw err(413, "فایل خیلی بزرگ است (حداکثر ۴۰۰ مگابایت).");
+    if (size > maxBytes) throw err(413, maxBytes===MAX_UPLOAD?limitMessage:'حداکثر حجم فایل ۲۵ مگابایت است.');
     canUpload(req.user); // throws if the user's plan allows no reel now (no point sending 400 MB first)
     const id = crypto.createHash("sha256").update(`${req.user.id}:${key}:${size}`).digest("base64url").slice(0, 24);
     const u = (db.uploads[id] ??= { id, userId: req.user.id, size, createdAt: Date.now() });
+    if(validateUpload&&sizeOnDisk(u.id)===u.size&&!u.contentValidated){try{u.contentKind=(await validateUpload(fileOf(u.id))).kind;u.contentValidated=true;}catch(error){fs.rmSync(fileOf(u.id),{force:true});delete db.uploads[u.id];save();throw error;}}
     u.touchedAt = Date.now();
     save();
     res.json(view(u));
@@ -74,6 +77,7 @@ export function uploadRoutes(app, { db, save, requireUser, wrap, canUpload = () 
     u.touchedAt = Date.now();
     save();
     if (tooBig) return res.status(413).json({ error: "بیشتر از اندازه‌ی فایل." });
+    if(validateUpload&&sizeOnDisk(u.id)===u.size){try{u.contentKind=(await validateUpload(fileOf(u.id))).kind;u.contentValidated=true;save();}catch(error){fs.rmSync(fileOf(u.id),{force:true});delete db.uploads[u.id];save();throw error;}}
     if (!res.headersSent && res.socket && !res.socket.destroyed) res.json(view(u));
   }));
 

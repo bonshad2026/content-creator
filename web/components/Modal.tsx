@@ -1,0 +1,8 @@
+import {useEffect,useRef,type ReactNode} from 'react';
+import {createPortal} from 'react-dom';
+import {X} from 'lucide-react';
+export function Modal({title,children,onClose,sheet=false,busy=false,className=''}:{title:string;children:ReactNode;onClose:()=>void;sheet?:boolean;busy?:boolean;className?:string}){
+  const ref=useRef<HTMLDivElement>(null),close=useRef(onClose);close.current=onClose;
+  useEffect(()=>{const previous=document.activeElement as HTMLElement;const first=ref.current?.querySelector<HTMLElement>('button:not(:disabled),input,textarea');first?.focus();const key=(event:KeyboardEvent)=>{if(event.key==='Escape'&&!busy)close.current();if(event.key==='Tab'){const list=[...ref.current!.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),textarea:not(:disabled),[tabindex="0"]')];if(!list.length)return;if(event.shiftKey&&document.activeElement===list[0]){event.preventDefault();list.at(-1)?.focus();}else if(!event.shiftKey&&document.activeElement===list.at(-1)){event.preventDefault();list[0].focus();}}};document.addEventListener('keydown',key);return()=>{document.removeEventListener('keydown',key);if(previous?.isConnected)previous.focus({preventScroll:true});};},[busy]);
+  return createPortal(<div className={`overlay ${sheet?'sheet-overlay':''}`} onMouseDown={e=>{if(e.target===e.currentTarget&&!busy)onClose();}}><div className={`${sheet?'sheet':'dialog'} ${className}`} role="dialog" aria-modal="true" aria-label={title} ref={ref}>{sheet&&<div className="sheet-handle"/>}<div className="dialog-heading"><h2>{title}</h2><button className="icon-button" aria-label="بستن" onClick={onClose} disabled={busy}><X size={20}/></button></div>{children}</div></div>,document.body);
+}

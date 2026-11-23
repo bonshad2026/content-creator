@@ -1,7 +1,57 @@
 # محتواساز — Content Creator Expert (demo)
 
-Mobile-first web app: log in with your phone number, describe your style in a few taps, upload photos/videos,
-and get ready-to-post captions, hooks, hashtags and video scripts written in your style.
+Mobile-first Persian app: select a fixed editing template, upload raw videos, complete missing parts in chat,
+and render with that template. The former global style questionnaire and brand settings are retired.
+
+## Template creation (current flow)
+
+Conversation handling is now separated from the template adapter: `src/conversation.js` owns the dialogue schema, role-aware history, pending questions, persistent goal/constraints, file-to-message relationships and generic operation checks. `src/template-conversation.js` supplies the active template's editable targets/capabilities and stable product IDs. Each real turn returns both a proposed selection and a dialogue decision. Clarification questions can offer dynamic buttons with exact question/choice IDs; free text retains the question context. Informational replies preserve selections; valid partial plans can request missing evidence. Unresolved/unsupported requests and claims of unexecuted changes block rendering; cancellation restores the previous resolved memory. Revision rendering independently rejects an unchanged timeline/caption before quota consumption. This is a general conversation contract, not a collection of Persian phrase cases. Offline contract/request-assembly tests do not establish real-model comprehension quality; no paid development requests were used.
+
+Completed template videos support **اصلاح این نسخه**. An explicit request reopens the same chat using the selected job's immutable analysis/media snapshot, with its output timestamps as context. Source speech is cached; new media can be supplied in chat. The fixed template still owns rendering. Requests are bounded to evidence selection and reviewed transcript corrections, not arbitrary effects or speech synthesis. The user reviews the selection and explicitly renders a new job; previous exports and version links remain available. Each new render counts toward the reel quota. Another active draft must first be completed/discarded. Revision requires retained source media (default 7 days); expired sources return an explicit error rather than silently editing the compressed export. Natural-language revision interpretation has not been tested with paid AI during development.
+
+The active frontend is React + TypeScript in `web/`. Run `npm run build:ui` after changes (`npm start` builds automatically). `public/index.html` loads the generated assets under `public/ui/`; legacy `app.js`, `template-flow.js`, and `media-ui.js` are not loaded. Optional compression still uses `public/media-prep.js`.
+
+Chat state, recording, uploads, and local draft persistence have separate lifecycles. Uploads retain 4 MiB resumable chunks; retrying a message uses an idempotency key to avoid duplicate analysis. Pending text/media persist in IndexedDB, and discard requires confirmation. `npm run typecheck` and `npm run test:ui` verify the frontend without paid AI requests.
+
+- One active template: **معرفی محصول** (`product-presenter`, v1). Opening presenter → product sections → closing presenter.
+- Upload one raw take or multiple videos. The service transcribes new media once, caches it, and asks for missing
+  template slots. Supplementary audio/video is attached to the same persistent chat; replies are at most 12 words.
+- Record audio/video, play it locally, discard or rerecord, then explicitly send. Camera/microphone require HTTPS
+  or localhost. File selection works without capture permission. A reply automatically targets the pending request;
+  tapping a missing requirement changes the reply context, with no dropdown.
+- The model selects existing segment/frame IDs, never layout, music, effects, speed or inherited creator preferences.
+  One usable angle per product suffices. Uncertain recognition requires confirmation; absent essential evidence blocks
+  rendering. Audio supplements need enough related product footage to cover their duration without looping.
+- Fixed renderer: 720×1280 / 30 fps, natural-speed cuts, original audio, no music/denoising/SFX, white Vazirmatn subtitles.
+  A separate matching video can cover presenter speech; independent audio plays over matching product footage.
+- `PRODUCT_TEMPLATE_SAMPLE_URL` optionally supplies a sample video in the template gallery. Without it, the card
+  explicitly shows a structure diagram, **not a claimed video sample**. No personal footage is published as a sample.
+- Demo mode does local media inspection but never pretends to recognize speech/products; it keeps requirements open.
+- APIs: `/api/templates`, `/api/edits`, `/api/edits/:id/messages`, `/analyze`, `/confirm`, `/render`.
+  Raw chat media/frame routes require the owner’s authentication. Legacy creation and style routes return 410.
+- Chat/evidence and cached transcripts live in `DATA_DIR/db.json` and `DATA_DIR/jobs/edit-<id>/`; jobs snapshot
+  template/evidence before rendering. Interrupted analysis is not automatically retried on startup.
+- Each account has **one active draft**. Creating another returns that draft. Discard uses an explicit confirmation
+  modal; the server archives the chat and allows a new draft. Unsent text, captured files and transcript edits are
+  saved in IndexedDB per account; quota/storage errors are shown immediately. Browser storage is device/origin-specific.
+- Chat has its own scroller and fixed composer, a paperclip attachment drawer, custom waveform audio/video players,
+  live microphone metering, and a three-dot processing indicator. Unchanged polls don't rebuild the interface.
+- Whisper input is now lossless mono WAV. Transcript suggestions must be reviewed; user corrections are locked and
+  cached, with phrase subtitles when old word timings no longer apply. This does not guarantee ASR accuracy.
+- Optional browser compression preserves the original and requires preview approval. It runs at playback speed;
+  unsupported codecs, hidden pages, failed or ineffective conversion fall back to direct upload. A synthetic desktop
+  test reduced 10.9 MB to 2.8 MB in 3 seconds with audio and 1080p retained; phone/quality review remains necessary.
+- `MAX_UPLOAD_MB=1024` is the default per-file cap. Uploads remain 4 MB resumable chunks, even after compression.
+- Template video segments are encoded once (CRF 21, max 4 Mbps at 720p); final joining copies video. Intermediates are
+  removed after successful export. `RAW_RETENTION_DAYS=7` removes raw sources of finished template edits only;
+  active drafts and final videos are preserved. Existing legacy jobs are outside this cleanup.
+- Isolated preview: `node --env-file=.env scripts/preview-server.mjs`; set `ENABLE_REAL_AI=1` only for approved real
+  testing. Data defaults to `data/test-out/template-ui-review`, port 3015. This never uses the main server's database.
+- HTTPS preview uses `scripts/preview-tunnel.compose.yml` and `preview.Caddyfile`, the existing MatStack key and staging
+  credentials. Configure `STAGING_ENV_FILE` and `PREVIEW_CADDYFILE`; load the tunnel key through Compose's `--env-file`.
+  The app uses `X-Creator-Token` so HTTP Basic auth remains intact; inline media uses an HttpOnly scoped cookie.
+- Checks: `npm run test:templates` (offline API + synthetic render), `test:plans`, `test:uploads`.
+  Real AI recognition and actual phone microphone/camera capture still need separate verification.
 
 ## Run
 ```bash
@@ -44,7 +94,7 @@ while being turned into text) go to the system temp folder and are deleted right
 - Phone + one-time-code login, Kavenegar SMS — `src/auth.js`
 - Plain HTML/CSS/JS single-page app, RTL, installable to home screen — `public/`
 
-## Video reels
+## Legacy video pipeline (historical jobs / offline fixtures)
 Videos (one or several, merged) are uploaded to this computer and edited with ffmpeg (`ffmpeg-static` package):
 the AI sees ~8 small frames + the Whisper transcript and returns one plan (which parts to keep, Persian on-screen texts, subtitles on/off, cover),
 then ffmpeg renders a 720x1280 reel (blurred background for landscape clips), burns texts/subtitles with the Vazirmatn font, and makes a cover.

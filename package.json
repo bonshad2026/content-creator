@@ -5,6 +5,10 @@
   "description": "Demo: learn a creator's style from samples and generate new content for new photos/videos with AI (GapGPT)",
   "type": "module",
   "scripts": {
+    "build:ui": "node scripts/build-ui.mjs",
+    "typecheck": "tsc --noEmit",
+    "test:ui": "vitest run",
+    "prestart": "npm run build:ui",
     "start": "node --env-file-if-exists=.env server.js",
     "dev": "node --watch --env-file-if-exists=.env server.js",
     "models": "node --env-file-if-exists=.env scripts/models.js",
@@ -21,7 +25,14 @@
     "demo": "node scripts/demo-server.mjs",
     "rescore": "node scripts/rescore.mjs",
     "test:plans": "node scripts/test-plans.mjs",
-    "test:uploads": "node scripts/test-uploads.mjs"
+    "test:uploads": "node scripts/test-uploads.mjs",
+    "test:templates": "node scripts/test-templates.mjs",
+    "test:retention": "node scripts/test-retention.mjs",
+    "test:trace": "node scripts/test-edit-trace.mjs",
+    "test:media": "node scripts/test-media-evidence.mjs",
+    "test:photo": "node scripts/test-photo-motion.mjs",
+    "test:ad": "node scripts/test-ad-scene.mjs",
+    "test:ad:grounded": "node scripts/test-grounded-ad.mjs"
   },
   "dependencies": {
     "@tensorflow/tfjs": "^4.22.0",
@@ -29,8 +40,22 @@
     "@vladmandic/face-api": "^1.7.15",
     "express": "^5.1.0",
     "ffmpeg-static": "^5.3.0",
+    "lucide-react": "^1.74.0",
     "openai": "^7.55.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "vazirmatn": "^33.0.3",
     "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.12",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "esbuild": "^0.28.2",
+    "fake-indexeddb": "^6.2.8",
+    "jsdom": "^31.0.1",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
   }
 }

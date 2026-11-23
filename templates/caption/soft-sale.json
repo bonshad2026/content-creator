@@ -1,0 +1,10 @@
+{
+  "id": "soft-sale",
+  "name": "فروش ساده",
+  "prompt": "Write one concise Persian Instagram sales caption: a short hook, supplied product features, supplied price if present, and the supplied ordering method if present. Use only supplied verified facts. Do not invent claims, benefits, discounts, urgency or availability. No medical promises. Keep to 40–80 Persian words. Add at most three relevant hashtags.",
+  "type": "caption",
+  "version": 1,
+  "platforms": [
+    "instagram"
+  ]
+}

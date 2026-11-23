@@ -1,0 +1,10 @@
+{
+  auto_https off
+  admin off
+}
+:80 {
+  basic_auth {
+    {$STAGING_AUTH_USER:stage} {$STAGING_AUTH_HASH}
+  }
+  reverse_proxy host.docker.internal:3015
+}
