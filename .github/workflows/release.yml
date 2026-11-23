@@ -98,6 +98,21 @@ jobs:
             || gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
           gh release upload "$GITHUB_REF_NAME" out/*
 
+      # Tells the dev-ops repo that a new build exists. Skipped until
+      # DEVOPS_DISPATCH_TOKEN is set, so this can't break the release today.
+      - name: Notify dev-ops
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.DEVOPS_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "DEVOPS_DISPATCH_TOKEN not set; skipping dispatch"
+            exit 0
+          fi
+          gh api "repos/bonshad2026/devops-stage/dispatches" \
+            -f event_type=content-creator-release \
+            -f "client_payload[version]=${GITHUB_REF_NAME#v}"
+
       - name: Keep the dry-run build
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
