@@ -1,0 +1,93 @@
+# Builds content-creator and publishes the deployable build as GitHub Release assets.
+#
+# Trigger : push a tag like v0.1.0
+# Output  : content-creator-<version>.tar.gz          the app + prod deps + built UI
+#           content-creator-<version>.tar.gz.sha256   its checksum
+#           content-creator-<version>.manifest.json   commit, size, sha256
+#
+# The tarball is self-contained: whatever deploys it does not run npm again.
+
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:      # dry run: builds and packages, publishes nothing
+
+permissions:
+  contents: write         # required to create the release
+
+env:
+  APP: content-creator
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    # Same Node as the app's runtime, so node_modules and ffmpeg-static match.
+    container: node:22-bookworm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm run test:ui
+
+      - name: Build UI
+        run: npm run build:ui
+
+      - name: Drop dev dependencies
+        run: npm prune --omit=dev --no-audit --no-fund
+
+      - name: Package artifact
+        run: |
+          set -euo pipefail
+
+          # Tag v0.1.0 -> version 0.1.0. On a manual run there is no tag.
+          V="${GITHUB_REF_NAME#v}"
+          [[ "$GITHUB_REF" == refs/tags/v* ]] || V="0.0.0-$GITHUB_RUN_NUMBER"
+
+          F="$APP-$V.tar.gz"
+          mkdir -p out
+
+          # Every tracked file (code, assets, fonts), plus prod deps and the built UI.
+          git ls-files -z | tar --null -T - -czf "out/$F" node_modules public
+
+          cd out
+          sha256sum "$F" > "$F.sha256"
+
+          cat > "$F.manifest.json" <<JSON
+          {
+            "app": "$APP",
+            "version": "$V",
+            "commit": "$GITHUB_SHA",
+            "builtAt": "$(date -u +%FT%TZ)",
+            "builder": "node:22-bookworm",
+            "size": $(stat -c%s "$F"),
+            "sha256": "$(cut -d' ' -f1 "$F.sha256")"
+          }
+          JSON
+
+          ls -l
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
+          gh release upload "$GITHUB_REF_NAME" out/*
+
+      - name: Keep the dry-run build
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: content-creator-dry-run
+          path: out/
+          retention-days: 7
