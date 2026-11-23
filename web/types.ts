@@ -1,0 +1,14 @@
+export type MediaKind = 'audio' | 'video';
+export interface Version {id:string;status:string;createdAt:number;video?:string;revisionOf?:string|null}
+export interface User {name:string;phone:string;admin?:boolean;usage?:{tokens:number;cost:number};plan?:{name:string;reelsPerDay:number|null;reelsPerMonth:number|null;until?:number;used:{reelsToday:number;reelsMonth:number}}}
+export interface Config {edition?:string;demoMode:boolean;smsEnabled:boolean;maxUploadBytes:number;model:string}
+export interface Requirement {id:string;label:string;done:boolean;prompt:string;accepts:string;product?:string}
+export interface Asset {id:string;type:MediaKind;name:string;duration?:number;waveform?:number[];part?:string}
+export interface Message {role:'user'|'assistant';text:string;assetIds?:string[];part?:string;label?:string;at:number;clientMessageId?:string}
+export interface Segment {id:string;text:string;captionText?:string;assetId:string;start:number;end:number}
+export interface Edit {build?:{canBuild:boolean;reason:string;existingJobId?:string|null};progress?:{stage:string;current?:number;total?:number;startedAt?:number}|null;dialogue?:{subject?:{request:string;goal:string;files:{id:string;name:string}[]};blocked:boolean;errorKind?:'execution'|null;understanding:string;question?:{id:string;text:string;choices:{id:string;label:string}[]}|null}|null;confirmationRejected?:boolean;revisionOf?:string|null;versions?:Version[];id:string;templateId:string;status:'awaiting'|'analyzing'|'ready'|'rendering'|'error';archived?:boolean;mediaExpired?:boolean;createdAt:number;messages:Message[];assets:Asset[];requirements:Requirement[];segments:Segment[];jobId?:string;error?:string;demo:boolean;selection?:{adjustments?:{fontSize:number;gainDb:number;speeds:Record<string,number>};products:{name:string;speech:string[];visuals:string[]}[];opening:string[];closing:string[];corrections:{id:string;text:string}[]};usage:{tokens:number;cost:number}}
+export interface Template {id:string;name:string;description:string;sample?:string}
+export interface Job {revisionOf?:string|null;id:string;kind:string;status:string;stage?:string;startedAt?:number;createdAt:number;brief?:string;error?:string;templateId?:string;editId?:string;video?:string;coverImg?:string;thumb?:string;output?:{duration?:number;caption?:string;hashtags?:string[];recipe?:string}}
+export interface LocalMedia {id:string;type:MediaKind;file:File;originalFile?:File|null;peaks?:number[]|null;duration?:number;saved?:boolean;recovered?:boolean}
+export interface Draft {editId:string;text:string;part:string;pending:LocalMedia[];transcriptEdits:Record<string,string>;saveState:'saved'|'saving'|'error';error?:string;loaded:boolean;sendAttempt?:{at?:number;part?:string;id:string;signature:string;fileIds:string[];text:string}}
+export interface SendProgress {phase:'idle'|'reading'|'uploading'|'retrying'|'submitting'|'failed';sent:number;total:number;fileIndex:number;fileCount:number;error?:string}

@@ -16,7 +16,9 @@ data-demo/
 *.wmv
 *.flv
 *.3gp
-*.ts
+# NOTE: do not add "*.ts" here. It matches MPEG transport streams, but it also
+# matches every TypeScript file in the repo (web/api.ts, web/hooks.ts, ...).
+# Videos are already covered by the data/ and demo-output/ rules above.
 
 # samples made from the user's own footage (videos, covers, frames) stay local; only the written report is kept
 demo-output/**
